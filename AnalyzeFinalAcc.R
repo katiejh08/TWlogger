@@ -6,7 +6,7 @@
 # e.g. I want to look at periods where ave movement is greater than X, otherwise it's resting behavior
 # 2) Plot non resting behaviors, do some last longer or have different parameters 
 # e.g. digging probably has a lot of repeated movement with stops in between, but you consider 
-# that whole section to be digging. 
+# that whole section to be digging. l;kjl
 
 
 ########################################
