@@ -88,8 +88,8 @@ library(RcppRoll)
 A <- cbind(data2$Ax, data2$Ay, data2$Az)
 o <- odba(A, sampling_rate = 50,method="wilson",n = 50) # n is sampling window, e.g. 50=1s
 # Plot ODBA
-#ba <- list(odba = o)
-#plott(ba, 50) # NOTE: Change if different sampling rate
+ba <- list(odba = o)
+plott(ba, 50) # NOTE: Change if different sampling rate
 
 # Calculate pitch and roll 
 pr <- a2pr(A,50)
@@ -100,8 +100,8 @@ r <-pr$r
 
 # Calculate jerk
 jerk <-njerk(A,sampling_rate=50)
-#jerklist <-(jerk=jerk)
-#plott(jerklist,fs=50)
+jerklist <-(jerk=jerk)
+plott(jerklist,fs=50)
 
 # Calculate msa
 msa <-msa(A)
@@ -178,6 +178,8 @@ data4 <- subset(data3, data3$dttz >= startMetrics & data3$dttz <= endMetrics)
 
 library(fitdistrplus)
 library(logspline)
+hist(o, breaks="FD")
+
 x <- o # Choose which metric to fit distribution
 descdist(x, discrete = FALSE)
 #Fit a Weibull distribution and a normal distribution:
