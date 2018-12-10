@@ -61,7 +61,7 @@ data2 <- data[,c("dttz","Ax","Ay","Az")]
 startTime <- as.POSIXct(strptime("2018-07-8 18:30:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 endTime <- as.POSIXct(strptime("2018-07-9 18:30:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 # Run subset() function to extract data for the selected timerange
-practice <- subset(data2, data2$dttz >= startTime & data2$dttz <= endTime)
+data2 <- subset(data2, data2$dttz >= startTime & data2$dttz <= endTime)
 
 # Create static plot
 p <- practice %>%
@@ -148,8 +148,6 @@ varsway[4320026:4320050] <-foo
 varsway[4320026:4320050]
 rm(foo)
 
-# Might want to calculate variance of surge and sway as well to look for patterns
-
 # Calculate norm
 normAcc <- norm2(A)
 # normlist <- list(normAcc = normAcc)
@@ -170,6 +168,49 @@ startMetrics <- as.POSIXct(strptime("2018-07-9 7:00:00",format="%Y-%m-%d %H:%M:%
 endMetrics <- as.POSIXct(strptime("2018-07-9 11:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 # Run subset() function to extract data for the selected timerange
 data4 <- subset(data3, data3$dttz >= startMetrics & data3$dttz <= endMetrics)
+
+
+##########################################
+####        Fit Distribution         #####
+##########################################
+library(fitdistrplus)
+library(logspline)
+x <- o # Choose which metric to fit distribution
+descdist(x, discrete = FALSE)
+#Fit a Weibull distribution and a normal distribution:
+fit.weibull <- fitdist(x, "weibull")
+fit.norm <- fitdist(x, "norm")
+#Inspect the fit for the normal:
+plot(fit.norm)
+#Inspect the Weibull fit:
+plot(fit.weibull)
+#Use @Aksakal's procedure explained here to simulate the KS-statistic under the null.
+n.sims <- 5e4
+stats <- replicate(n.sims, {      
+  r <- rweibull(n = length(x)
+                , shape= fit.weibull$estimate["shape"]
+                , scale = fit.weibull$estimate["scale"]
+  )
+  as.numeric(ks.test(r
+                     , "pweibull"
+                     , shape= fit.weibull$estimate["shape"]
+                     , scale = fit.weibull$estimate["scale"])$statistic
+  )      
+})
+#The ECDF of the simulated KS-statistics looks like follows.
+plot(ecdf(stats), las = 1, main = "KS-test statistic simulation (CDF)", col = "darkorange", lwd = 1.7)
+grid()
+#Calculate p using the simulated null distribution of the KS-statistics
+fit <- logspline(stats)
+
+1 - plogspline(ks.test(x
+                       , "pweibull"
+                       , shape= fit.weibull$estimate["shape"]
+                       , scale = fit.weibull$estimate["scale"])$statistic
+               , fit
+)
+
+
 
 ##########################################
 ####              PCA                #####
