@@ -173,6 +173,9 @@ data4 <- subset(data3, data3$dttz >= startMetrics & data3$dttz <= endMetrics)
 ##########################################
 ####        Fit Distribution         #####
 ##########################################
+# Attempting to fit a distribution to my data. I believe I need to fit to one of the 
+# calculated metrics. Though maybe I can find a 3D distribution for the raw data?
+
 library(fitdistrplus)
 library(logspline)
 x <- o # Choose which metric to fit distribution
