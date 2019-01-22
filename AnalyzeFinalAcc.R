@@ -28,7 +28,7 @@ data <- read_csv(filename,
 ########################################
 ####       Confirm Time Zone       #####
 ########################################
-# Check tz. As of 21 Jan 2018 dttz will always import as UTC, so need to change back to dttz
+# Check dttz. Dttz has not been retaining time zone when writing to CSV. 
 attr(data$dttz, "tzone") #Check tz
 attr(data$dttz, "tzone") <- "Etc/GMT+3"
 
