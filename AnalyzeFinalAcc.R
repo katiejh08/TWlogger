@@ -12,6 +12,14 @@ library(gridExtra)
 setwd("~/Projects/R/TWlogger")
 tzOffset <-"Etc/GMT+3"
 
+# Note on dataframes:
+# data is final raw acc data
+# data2 is subset to 24hr period of interest
+# down is down sampled
+# data3 is calculated metrics (expanded version)
+# data4 is calculated metrics (abbreviated version)
+# data5 is subset metrics
+
 ########################################
 ####         Import Acc Data       #####
 ########################################
@@ -109,13 +117,23 @@ endMetrics <- as.POSIXct(strptime("2018-07-09 09:00:00",format="%Y-%m-%d %H:%M:%
 # Note: data3 is expanded metrics and data4 is abbreviated metrics; must choose which one to subset
 data5 <- subset(data3, data2$dttz >= startMetrics & data2$Metrics <= endTime)
 
+
+##########################################
+####         Downsample Data         #####
+##########################################
+# Decimation factor of 5 downsamples to 10Hz
+down <- decdc(data2,5)
+
 ##########################################
 ####       Calculate Metrics         #####
 ##########################################
+fs <- 50 # Specify sampling rate, which will be different based on decimation
+sw <- 50 # Specify sampling window (50 or 1s if at 50Hz, 10 or 1s if at 10Hz)
+
 ## Magnitude of acceleration
-Ax <-data2$Ax
-Ay <-data2$Ay
-Az <-data2$Az
+Ax <-down$Ax
+Ay <-down$Ay
+Az <-down$Az
 Ax2 <-Ax^2
 Ay2 <-Ay^2
 Az2 <-Az^2
@@ -123,63 +141,61 @@ Amag <- Ax2 + Ay2 + Az2
 Amag <-sqrt(Amag)
 
 ## Running mean of magnitude of acceleration
-Amag_rollmean <- roll_mean(Amag,50,fill=NA)
+Amag_rollmean <- roll_mean(Amag,fs,fill=NA)
 Amag_rollmean[seq(1,24)] <- Amag_rollmean[25]
 Amag_rollmean[seq(length(Amag_rollmean)-24,length(Amag_rollmean))] <- Amag_rollmean[length(Amag_rollmean)-25]
 
 ## ODBA (Need to read about Wilson method, filter pass, and n)
-A <- cbind(data2$Ax, data2$Ay, data2$Az)
-odba <- odba(A, sampling_rate = 50,method="wilson",n = 50) # n is sampling window, e.g. 50=1s
-odba2 <- odba(A, sampling_rate = 50,method="wilson",n = 100)
-data5 <-cbind.data.frame(dt,true_since,odba2)
+A <- cbind(down$Ax, down$Ay, down$Az)
+odba <- odba(A, sampling_rate = fs,method="wilson",n = sw) # n is sampling window, e.g. 50=1s
 # Plot ODBA
 # ba <- list(odba = odba)
-# plott(ba, 50) # NOTE: Change if different sampling rate
+# plott(ba, fs=fs) # NOTE: Change if different sampling rate
 
 ## Pitch and roll (NOTE: calculates in radians)
-pr <- a2pr(A,50)
+pr <- a2pr(A,fs)
 #prlist <-list(pitch=pr$p,roll=pr$r)
-#plott(prlist,fs=50)
+#plott(prlist,fs=fs)
 p <- pr$p
 r <-pr$r
 
 ## Jerk
-jerk <-njerk(A,sampling_rate=50)
+jerk <-njerk(A,sampling_rate=fs)
 # jerklist <-(jerk=jerk)
-# plott(jerklist,fs=50)
+# plott(jerklist,fs=fs)
 
 ## MSA (minimum specific acceleration)
 msa <-msa(A)
 #msalist <- list(msa = msa)
-#plott(msalist,fs=50)
+#plott(msalist,fs=fs)
 
 ##  Norm
 normAcc <- norm2(A)
 # normlist <- list(normAcc = normAcc)
-# plott(normlist,fs=50)
+# plott(normlist,fs=fs)
 
 ## Running means and variances for each axis
-mheave <-roll_mean(data2$Az, n=50, fill=NA) # fill=NA replaced missing values created by moving window (e.g.first 24 and last 25 rows were empty) 
+mheave <-roll_mean(data2$Az, n=sw, fill=NA) # fill=NA replaced missing values created by moving window (e.g.first 24 and last 25 rows were empty) 
 mheave[seq(1,24)] <- mheave[25]
 mheave[seq(length(mheave)-24,length(mheave))] <- mheave[length(mheave)-25]
 
-varheave <-roll_var(data2$Az, n=50, fill=NA) #n is window size, e.g. 1s=50
+varheave <-roll_var(data2$Az, n=sw, fill=NA) #n is window size
 varheave[seq(1,24)] <- varheave[25]
 varheave[seq(length(varheave)-24,length(varheave))] <- varheave[length(varheave)-25]
 
-msurge <-roll_mean(data2$Ax, n=50, fill=NA)
+msurge <-roll_mean(data2$Ax, n=sw, fill=NA)
 msurge[seq(1,24)] <- msurge[25]
 msurge[seq(length(msurge)-24,length(msurge))] <- msurge[length(msurge)-25]
 
-varsurge <- roll_var(data2$Ax, n=50, fill=NA)
+varsurge <- roll_var(data2$Ax, n=sw, fill=NA)
 varsurge[seq(1,24)] <- varsurge[25]
 varsurge[seq(length(varsurge)-24,length(varsurge))] <- varsurge[length(varsurge)-25]
 
-msway <- roll_mean(data2$Ay, n=50, fill=NA)
+msway <- roll_mean(data2$Ay, n=sw, fill=NA)
 msway[seq(1,24)] <- msway[25]
 msway[seq(length(msway)-24,length(msway))] <- msway[length(msway)-25]
 
-varsway <- roll_var(data2$Ay, n=50, fill=NA)
+varsway <- roll_var(data2$Ay, n=sw, fill=NA)
 varsway[seq(1,24)] <- varsway[25]
 varsway[seq(length(varsway)-24,length(varsway))] <- varsway[length(varsway)-25]
 
@@ -188,17 +204,17 @@ varsway[seq(length(varsway)-24,length(varsway))] <- varsway[length(varsway)-25]
 # z <- varsurge
 # z <- varsway
 # varlist <- list(z = z)
-# plott(varlist,fs=50)
+# plott(varlist,fs=fs)
 
 ## Plot multiple metrics
 # overallList <- list(jerk = jerk, odba = odba,msa = msa)
-# plott(overallList,fs=50)
+# plott(overallList,fs=fs)
 
 ##########################################
 ####   Combine metrics into new df   #####
 ##########################################
-dttz <-data2$dttz
-true_since <-data2$true_since
+dttz <-down$dttz
+true_since <-down$true_since
 # Create expanded metrics file
 data3 <-cbind.data.frame(dttz,true_since,Amag_rollmean,odba,jerk,mheave,varheave,msurge,varsurge,msway,varsway,msa, p,r,normAcc)
 # Create abbreviated metrics file
@@ -206,11 +222,6 @@ data4 <-cbind.data.frame(dttz,true_since,Amag_rollmean,odba,jerk,p,r)
 # Check for NAs
 sapply(data4, function(x) sum(is.na(x)))
 str(data4)
-
-##########################################
-####       Downsample Metrics        #####
-##########################################
-# onehz <- decdc()
 
 ##########################################
 ####          Create Plots           #####
@@ -236,7 +247,7 @@ qqnorm(z.norm); qqline(z.norm) # Draw a QQplot with a 45-degree reference line
 # require(gridExtra)
 
 # Plot acc
-p1 <- data2 %>%
+p1 <- down %>%
   gather(axis, acc, Ax:Az) %>%
   ggplot(aes(dttz, acc, color = axis)) +
   theme(legend.position="top") +
@@ -246,7 +257,7 @@ p1 <- data2 %>%
 p1
 
 # Plot Amag (or swap out other metric)
-p2 <- data2 %>%
+p2 <- down %>%
   ggplot(aes(dttz, Amag),color = 'black') +
   geom_line() +
   theme_classic() +
@@ -254,7 +265,7 @@ p2 <- data2 %>%
 p2
 
 # Plot Amag_rollmean (or swap out other metric)
-p3 <- data2 %>%
+p3 <- down %>%
   ggplot(aes(x = dttz, y = Amag_rollmean),color= 'black') +
   geom_line() +
   labs(x = "Time", y = "Running mean acc mag")
@@ -264,7 +275,7 @@ p3
 # grid.arrange(p1, p2, p3, nrow=3)
 
 ## Create ODBA plot
-op <- data4 %>% # May need to change dataframe from which it's drawing
+op <- down %>% # May need to change dataframe from which it's drawing
   ggplot(aes(dt, odba),color = 'black') +
   geom_line() +
   theme_classic() +
