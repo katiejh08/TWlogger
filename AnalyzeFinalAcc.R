@@ -14,8 +14,8 @@ tzOffset <-"Etc/GMT+3"
 
 # Note on dataframes:
 # data is final raw acc data
-# data2 is subset to 24hr period of interest
-# down is down sampled
+# data2 is raw acc data subset to 24hr period of interest
+# down is down sampled acc data
 # data3 is calculated metrics (expanded version)
 # data4 is calculated metrics (abbreviated version)
 # data5 is subset metrics
@@ -40,10 +40,19 @@ data <- read_csv(filename,
                    secs_since = col_double()))
 
 # Import metrics file
-data <- read_csv(filename, 
-                 col_types = cols(
-                   dt = col_datetime()))
+# data <- read_csv(filename, 
+#                  col_types = cols(
+#                    dt = col_datetime()))
 
+# Import raw acc and metrics file
+# data <- file.choose()
+# test <- read_csv(filename, 
+#                  col_types = cols(
+#                    dt = col_datetime(),
+#                    Ax = col_double(),
+#                    Ay = col_double(),
+#                    Az = col_double(),
+#                    Amag_rollmean = col_double()))
 
 ########################################
 ####       Confirm Time Zone       #####
@@ -55,10 +64,8 @@ attr(data$dttz, "tzone") <- "Etc/GMT+3"
 # If necessary, solve myriad time zone issues specific to each season ----YEEHAW!
 
 # For July 2018 tags
-tzOffset <-"Etc/GMT+3"
-str(data)
 attr(data$dttz, "tzone") #Check tz
-data$dttz <- force_tz(data$dttz,tzone=tzOffset)
+# data$dttz <- force_tz(data$dttz,tzone=tzOffset)
 attr(data$dttz, "tzone") <- "Etc/GMT+3"
 attr(data$dttz, "tzone") #Check tz
 head(data$dttz)
@@ -92,10 +99,10 @@ depid
 # For 2017 tags (must force manually)
 depid <- "20170214_Tag6_P25"
 
-## Create Bird ID
+## Create Bird ID after subsetting and downsampling
 depid2 <- strsplit(depid,'_')
 depid2[[1]][3]
-data2$ID <- depid2[[1]][3] # Add bird ID to metrics file; may need to change dataframe depending on subset
+down$ID <- depid2[[1]][3]
 
 ####################################
 ####        Subset Data        #####
@@ -105,8 +112,8 @@ data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
 
 ## Create 24-hr subsets 
 #Specify the start and end time of segment of interest to create
-startTime <- as.POSIXct(strptime("2018-07-9 06:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
-endTime <- as.POSIXct(strptime("2018-07-09 09:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+startTime <- as.POSIXct(strptime("2018-07-8 18:30:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2018-07-09 18:30:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 # Run subset() function to extract data for the selected timerange
 data2 <- subset(data2, data2$dttz >= startTime & data2$dttz <= endTime)
 
@@ -122,7 +129,8 @@ data5 <- subset(data3, data2$dttz >= startMetrics & data2$Metrics <= endTime)
 ####         Downsample Data         #####
 ##########################################
 # Decimation factor of 5 downsamples to 10Hz
-down <- decdc(data2,5)
+down <- data.matrix(data2)
+down <- decdc(down,5)
 
 ##########################################
 ####       Calculate Metrics         #####
