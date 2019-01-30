@@ -1,3 +1,7 @@
+# Below I've mashed together the for loop from AnalyzeFinalAcc, 
+# the access multiple files within folder from CombineCSV, and 
+# random online blogs.
+
 library(plyr)
 
 setwd("~/Projects/R/TWlogger")
@@ -12,7 +16,46 @@ filenames <- list.files(path = pathChoice, pattern = "*.csv",
                         all.files = FALSE, full.names = FALSE, 
                         recursive = FALSE, ignore.case = TRUE)
 import.list <- llply(paste(pathChoice,"/",filenames,sep = ""), read.csv)
-down <- do.call("rbind", sapply(paste(pathChoice,"/",filenames,sep = ""), read.csv, simplify = FALSE))
+
+# Now begin loop or modify following do.call to apply multiple functions?
+# down <- do.call("rbind", sapply(paste(pathChoice,"/",filenames,sep = ""), read.csv, simplify = FALSE))
+
+# OR
+
+# Below script modified from https://www.r-bloggers.com/perform-a-function-on-each-file-in-r/
+# fileNames <- Sys.glob(paste("*.", extension, sep = ""))
+# fileNumbers <- seq(fileNames)
+
+for (fileNumber in fileNumbers) {
+  
+  # Import data:
+  data <- read_csv(filename, 
+                   col_types = cols(
+                     #dttz = col_datetime(),
+                     #dt = col_datetime(),
+                     temp = col_double(), # Only comment this out for 2017 tags
+                     Ax = col_double(),
+                     Ay = col_double(),
+                     Az = col_double(),
+                     Mx = col_double(),
+                     My = col_double(),
+                     Mz = col_double(),
+                     freq = col_double(), # Only comment this out for 2017 tags
+                     secs_since = col_double()))
+  
+  # The following read.csv was from example
+  # sample <- read.csv(fileNames[fileNumber],
+  #                    header = TRUE,
+  #                    sep = ",")
+  
+  # Sample function: add one to every widget value in every file
+  # See below for order of functions to be applied to every file
+  sample$Widgets <- sample$Widgets + 1
+  
+  # Write old data to new files:
+  write.csv(down, file=paste(depid,"-",fs,"Hz.csv",sep=""), row.names = FALSE)
+  
+}
 
 # Order of functions to be applied
 attr(data$dttz, "tzone") <- tzOffset # Correct tz from UTC to GMT-3
