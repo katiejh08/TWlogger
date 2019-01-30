@@ -2,8 +2,3 @@
 .Rhistory
 .RData
 .Ruserdata
-# Output data 
-*.Rda 
-*.pdf 
-*.csv 
-*.html
