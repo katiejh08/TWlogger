@@ -135,7 +135,7 @@ data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
 
 # Decimation factor of 5 downsamples to 10Hz
 # Decimate each vector separately
-df <- 5 # Set decimation factor df
+df <- 50 # Set decimation factor df
 fs <- 50 # Set original sampling rate
 # For datetime select ever nth value
 dttz <- data2$dttz
@@ -155,10 +155,12 @@ Ax_mat <- matrix(Ax,ncol=1)
 Ay_mat <- matrix(Ay,ncol=1)
 Az_mat <- matrix(Az,ncol=1)
 # First downsample with df =5
+df=5
 Ax_down <- decdc(Ax_mat,df)
 Ay_down <- decdc(Ay_mat,df)
 Az_down <- decdc(Az_mat,df)
 # Next downsample with df =10
+df=10
 Ax_down2 <- decdc(Ax_down,df)
 Ay_down2 <- decdc(Ay_down,df)
 Az_down2 <- decdc(Az_down,df)
