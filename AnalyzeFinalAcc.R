@@ -55,17 +55,21 @@ data <- read_csv(filename,
 #                    Amag_rollmean = col_double()))
 
 # Import down sampled data
-# filename <- file.choose()
-# data <- read_csv(filename,
-#                  col_types = cols(
-#                    dttz_down = col_datetime()))
+filename <- file.choose()
+R60 <- read_csv(filename,
+                 col_types = cols(
+                   dttz_down = col_datetime(),
+                   true_since_down = col_double(),
+                   Ax_down = col_double(),
+                   Ay_down = col_double(),
+                   Az_down = col_double()))
 
 ########################################
 ####       Confirm Time Zone       #####
 ########################################
 # Check dttz. Dttz has not been retaining time zone when writing to CSV 
 attr(data$dttz, "tzone") #Check tz
-attr(data$dttz, "tzone") <- "Etc/GMT+3"
+attr(data$dttz, "tzone") <- "GMT"
 
 # If necessary, solve myriad time zone issues specific to each season ----YEEHAW!
 
@@ -88,9 +92,8 @@ attr(data$dttz, "tzone") <- "Etc/GMT+3"
 # attr(data$dt, "tzone") #Check tz
 
 # For February 2017 tags
-# attr(data$dttz, "tzone") <- "Etc/GMT+3"
-# attr(data$dttz, "tzone") #Check tz
-# head(data$dttz)
+attr(data$dttz, "tzone") <- "Etc/GMT+3"
+attr(data$dttz, "tzone") #Check tz
 
 ############################################
 ####  Create Deployment ID or Bird ID  #####
@@ -105,29 +108,25 @@ depid
 # For 2017 tags (must force manually)
 # depid <- "20170214_Tag6_P25"
 
-## Create Bird ID after subsetting and downsampling
-# depid2 <- strsplit(depid,'_')
-# depid2[[1]][3]
-# down$ID <- depid2[[1]][3]
-
 ####################################
 ####        Subset Data        #####
 ####################################
 ## Subset acc raw data to only include acc
 data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
-# rm(data)
+
 
 ## Create more narrow subsets (First calculate metrics below)
 # startMetrics <- as.POSIXct(strptime("2018-07-9 06:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 # endMetrics <- as.POSIXct(strptime("2018-07-09 09:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 # Extract data for the selected timerange
 # Note: data3 is expanded metrics and data4 is abbreviated metrics; must choose which one to subset
-# data5 <- subset(data3, data2$dttz >= startMetrics & data2$Metrics <= endTime)
+# data5 <- subset(data3, data2$dttz >= startMetrics & data2$Metrics <= endMetrics)
 
 
 ##########################################
 ####         Downsample Data         #####
 ##########################################
+
 # decdc runs a low pass filter (essentially a running mean)
 # meaning it knocks out noise and interpolates
 # every 10th of a second we've come up with a decimated (averaged) value 
@@ -137,16 +136,15 @@ data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
 # Decimate each vector separately
 df <- 50 # Set decimation factor df
 fs <- 50 # Set original sampling rate
-# For datetime select ever nth value
+# For datetime select every nth value
 dttz <- data2$dttz
 a <- dttz
 dttz_down <- a[seq(1, length(a), df)]
-
+# For true_ince select every nth value
 true_since <- data2$true_since
 a <- true_since
 true_since_down <- a[seq(1, length(a), df)]
-
-
+# Create individual vectors from acc fields
 Ax <- data2$Ax
 Ay <- data2$Ay
 Az <- data2$Az
@@ -154,26 +152,39 @@ Az <- data2$Az
 Ax_mat <- matrix(Ax,ncol=1)
 Ay_mat <- matrix(Ay,ncol=1)
 Az_mat <- matrix(Az,ncol=1)
-# First downsample with df =5
-df=5
-Ax_down <- decdc(Ax_mat,df)
-Ay_down <- decdc(Ay_mat,df)
-Az_down <- decdc(Az_mat,df)
-# Next downsample with df =10
-df=10
-Ax_down2 <- decdc(Ax_down,df)
-Ay_down2 <- decdc(Ay_down,df)
-Az_down2 <- decdc(Az_down,df)
-# Reset df to 50 to be able to calculate new fs
+# First attempt with decimate function
+Ax_down <- decimate(Ax_mat,5,ftype="fir")
+Ax_down <- decimate(Ax_down,10,ftype="fir")
+Ay_down <- decimate(Ay_mat,5,ftype="fir")
+Ay_down <- decimate(Ay_down,10,ftype="fir")
+Az_down <- decimate(Az_mat,5,ftype="fir")
+Az_down <- decimate(Az_down,10,ftype="fir")
+
+# # First downsample with df =5
+# df=5
+# Ax_down <- decdc(Ax_mat,df)
+# Ay_down <- decdc(Ay_mat,df)
+# Az_down <- decdc(Az_mat,df)
+# # Temp write to csv to then reimport to continue downsampling
+# down10 <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
+# 
+# # Next downsample with df =5
+# df=10
+# Ax_down <- decdc(Ax_mat,df)
+# Ay_down <- decdc(Ay_mat,df)
+# Az_down <- decdc(Az_mat,df)
+# # Reset df to 50 to be able to calculate new fs
+
 data2_down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
 down <-data2_down
+
+# Create Bird ID after downsampling
+depid2 <- strsplit(depid,'_')
+depid2[[1]][3]
+ID <- depid2[[1]][3]
+
 # Very important to run this line to reset sampling rate to down sampled rate
 fs = fs/df
-
-# Historic attempt:
-# Select every nth value from datetime
-# down <- data.matrix(data2)
-# down <- decdc(down,5)
 
 ##########################################
 ####       Calculate Metrics         #####
@@ -265,8 +276,12 @@ odba <- odba(A, sampling_rate = fs,method="wilson",n = sw) # n is sampling windo
 ####   Combine metrics into new df   #####
 ##########################################
 # Combine down sampled acc data and metrics calculated using down sampled data
-down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down,Amag_rollmean,odba)
+down <- cbind.data.frame(ID,dttz_down,true_since_down,Ax_down,Ay_down,Az_down,Amag,Amag_rollmean,odba)
 
+startTime <- as.POSIXct(strptime("2018-07-11 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2018-07-12 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+# Extract data for the selected timerange
+down_24hr <- subset(down, down$dttz_down >= startTime & down$dttz_down <= endTime)
 
 # dttz <-down$dttz
 # true_since <-down$true_since
@@ -275,8 +290,8 @@ down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down,Amag_
 # # Create abbreviated metrics file
 # data4 <-cbind.data.frame(dttz,true_since,Amag_rollmean,odba,jerk,p,r)
 # Check for NAs
-# sapply(data4, function(x) sum(is.na(x)))
-# str(data4)
+sapply(down, function(x) sum(is.na(x)))
+# str(down)
 
 ##########################################
 ####          Create Plots           #####
@@ -311,13 +326,13 @@ down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down,Amag_
 #   labs(x = "Time", y = "Acceleration")
 # p1
 # 
-# # Plot Amag (or swap out other metric)
-# p2 <- down_24hr %>%
-#   ggplot(aes(dttz, Amag),color = 'black') +
-#   geom_line() +
-#   theme_classic() +
-#   labs(x = "Time", y = "Acc mag")
-# p2
+# Plot Amag (or swap out other metric)
+p2 <- R60 %>%
+  ggplot(aes(dttz_down, Amag_rollmean),color = 'black') +
+  geom_line() +
+  theme_classic() +
+  labs(x = "Time", y = "Running mean of Acc mag")
+p2
 # 
 # # Plot Amag_rollmean (or swap out other metric)
 # p3 <- down_24hr %>%
@@ -406,10 +421,7 @@ down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down,Amag_
 
 # Change dataframe and file name addition as needed
 write_csv(down_24hr, file.path(dirname(filename), paste(depid,"-",fs,"Hz.csv",sep="")))
-# write_csv(final2, file.path(dirname(filename), paste(depid,"-acc.csv",sep="")))
-
-
-
+# write_csv(down10, file.path(dirname(filename), paste(depid,"-",fs,"Hz.csv",sep="")))
 
 ##########################################
 #####
