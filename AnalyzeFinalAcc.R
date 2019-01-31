@@ -12,14 +12,6 @@ library(gridExtra)
 setwd("~/Projects/R/TWlogger")
 tzOffset <-"Etc/GMT+3"
 
-# Note on dataframes:
-# data is final raw acc data
-# data2 is raw acc data subset to 24hr period of interest
-# down is down sampled acc data
-# data3 is calculated metrics (expanded version)
-# data4 is calculated metrics (abbreviated version)
-# data5 is subset metrics
-
 ########################################
 ####         Import Acc Data       #####
 ########################################
@@ -39,22 +31,8 @@ data <- read_csv(filename,
                    freq = col_double(), # Only comment this out for 2017 tags
                    secs_since = col_double()))
 
-# Import metrics file
-# data <- read_csv(filename, 
-#                  col_types = cols(
-#                    dt = col_datetime()))
-
-# Import raw acc and metrics file
-# filename <- file.choose()
-# data <- read_csv(filename, 
-#                  col_types = cols(
-#                    dt = col_datetime(),
-#                    Ax = col_double(),
-#                    Ay = col_double(),
-#                    Az = col_double(),
-#                    Amag_rollmean = col_double()))
-
 # Import down sampled data
+# Change name of dataframe for desired import
 filename <- file.choose()
 R60 <- read_csv(filename,
                  col_types = cols(
@@ -73,13 +51,6 @@ attr(data$dttz, "tzone") <- "GMT"
 
 # If necessary, solve myriad time zone issues specific to each season ----YEEHAW!
 
-# For July 2018 tags
-# attr(data$dttz, "tzone") #Check tz
-# data$dttz <- force_tz(data$dttz,tzone=tzOffset)
-# attr(data$dttz, "tzone") <- "Etc/GMT+3"
-# attr(data$dttz, "tzone") #Check tz
-# head(data$dttz)
-
 # For July 2017 tags
 # Must subtract one hour from dt and dttz (because processed in Combine and ApplyCal as if was UTC-8)
 # attr(data$dttz, "tzone") <- "Etc/GMT+4"
@@ -92,21 +63,18 @@ attr(data$dttz, "tzone") <- "GMT"
 # attr(data$dt, "tzone") #Check tz
 
 # For February 2017 tags
-attr(data$dttz, "tzone") <- "Etc/GMT+3"
-attr(data$dttz, "tzone") #Check tz
+# attr(data$dttz, "tzone") <- "Etc/GMT+3"
+# attr(data$dttz, "tzone") #Check tz
 
 ############################################
 ####  Create Deployment ID or Bird ID  #####
 ############################################
-## Create deployment ID
-# For 2018 tags
+
+# Create deployment ID
 depid <- basename(filename)
 depid <- strsplit(depid,'-')
 depid <- depid[[1]][1]
 depid
-
-# For 2017 tags (must force manually)
-# depid <- "20170214_Tag6_P25"
 
 ####################################
 ####        Subset Data        #####
@@ -114,14 +82,12 @@ depid
 ## Subset acc raw data to only include acc
 data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
 
-
-## Create more narrow subsets (First calculate metrics below)
-# startMetrics <- as.POSIXct(strptime("2018-07-9 06:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
-# endMetrics <- as.POSIXct(strptime("2018-07-09 09:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
-# Extract data for the selected timerange
-# Note: data3 is expanded metrics and data4 is abbreviated metrics; must choose which one to subset
-# data5 <- subset(data3, data2$dttz >= startMetrics & data2$Metrics <= endMetrics)
-
+## Subset data
+# startTime <- as.POSIXct(strptime("2018-07-9 06:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+# endTime <- as.POSIXct(strptime("2018-07-09 09:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+## Extract data for the selected timerange
+## Change source data as needed
+# subset <- subset(data, data2$dttz >= startTime & data2$dttz <= endTime)
 
 ##########################################
 ####         Downsample Data         #####
@@ -131,28 +97,33 @@ data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
 # meaning it knocks out noise and interpolates
 # every 10th of a second we've come up with a decimated (averaged) value 
 # which represents the window of values at that time
+# (e.g., decimation factor of 5 downsamples to 10Hz)
 
-# Decimation factor of 5 downsamples to 10Hz
 # Decimate each vector separately
 df <- 50 # Set decimation factor df
 fs <- 50 # Set original sampling rate
+
 # For datetime select every nth value
 dttz <- data2$dttz
 a <- dttz
 dttz_down <- a[seq(1, length(a), df)]
+
 # For true_ince select every nth value
 true_since <- data2$true_since
 a <- true_since
 true_since_down <- a[seq(1, length(a), df)]
+
 # Create individual vectors from acc fields
 Ax <- data2$Ax
 Ay <- data2$Ay
 Az <- data2$Az
+
 # Convert vectors to numeric matrix
 Ax_mat <- matrix(Ax,ncol=1)
 Ay_mat <- matrix(Ay,ncol=1)
 Az_mat <- matrix(Az,ncol=1)
-# First attempt with decimate function
+
+# Use decimate function
 Ax_down <- decimate(Ax_mat,5,ftype="fir")
 Ax_down <- decimate(Ax_down,10,ftype="fir")
 Ay_down <- decimate(Ay_mat,5,ftype="fir")
@@ -160,21 +131,26 @@ Ay_down <- decimate(Ay_down,10,ftype="fir")
 Az_down <- decimate(Az_mat,5,ftype="fir")
 Az_down <- decimate(Az_down,10,ftype="fir")
 
-# # First downsample with df =5
-# df=5
+## Use decdc function
+## First downsample with df =5
+# df <- 5
 # Ax_down <- decdc(Ax_mat,df)
 # Ay_down <- decdc(Ay_mat,df)
 # Az_down <- decdc(Az_mat,df)
-# # Temp write to csv to then reimport to continue downsampling
+#
+## Temp write to csv, restart R, and reimport to continue downsampling
 # down10 <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
 # 
 # # Next downsample with df =5
-# df=10
+# df <- 10
 # Ax_down <- decdc(Ax_mat,df)
 # Ay_down <- decdc(Ay_mat,df)
 # Az_down <- decdc(Az_mat,df)
+#
 # # Reset df to 50 to be able to calculate new fs
+# df <- 50
 
+# Combine down sampled data into one dataframe
 data2_down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
 down <-data2_down
 
@@ -210,33 +186,33 @@ Amag_rollmean[seq(length(Amag_rollmean)-24,length(Amag_rollmean))] <- Amag_rollm
 ## ODBA (Need to read about Wilson method, filter pass, and n)
 A <- cbind(down$Ax_down,down$Ay_down,down$Az_down)
 odba <- odba(A, sampling_rate = fs,method="wilson",n = sw) # n is sampling window, e.g. 50=1s
-# Plot ODBA
+## Plot ODBA
 # ba <- list(odba = odba)
 # plott(ba, fs=fs) # NOTE: Change if different sampling rate
 
-# ## Pitch and roll (NOTE: calculates in radians)
+## Pitch and roll (NOTE: calculates in radians)
 # pr <- a2pr(A,fs)
-# #prlist <-list(pitch=pr$p,roll=pr$r)
-# #plott(prlist,fs=fs)
+##prlist <-list(pitch=pr$p,roll=pr$r)
+##plott(prlist,fs=fs)
 # p <- pr$p
 # r <-pr$r
 # 
-# ## Jerk
+## Jerk
 # jerk <-njerk(A,sampling_rate=fs)
-# # jerklist <-(jerk=jerk)
-# # plott(jerklist,fs=fs)
+## jerklist <-(jerk=jerk)
+## plott(jerklist,fs=fs)
 # 
-# ## MSA (minimum specific acceleration)
+## MSA (minimum specific acceleration)
 # msa <-msa(A)
-# #msalist <- list(msa = msa)
-# #plott(msalist,fs=fs)
+##msalist <- list(msa = msa)
+##plott(msalist,fs=fs)
 # 
-# ##  Norm
+## Norm
 # normAcc <- norm2(A)
-# # normlist <- list(normAcc = normAcc)
-# # plott(normlist,fs=fs)
+## normlist <- list(normAcc = normAcc)
+## plott(normlist,fs=fs)
 # 
-# ## Running means and variances for each axis
+## Running means and variances for each axis
 # mheave <-roll_mean(data2$Az, n=sw, fill=NA) # fill=NA replaced missing values created by moving window (e.g.first 24 and last 25 rows were empty) 
 # mheave[seq(1,24)] <- mheave[25]
 # mheave[seq(length(mheave)-24,length(mheave))] <- mheave[length(mheave)-25]
@@ -283,11 +259,9 @@ endTime <- as.POSIXct(strptime("2018-07-12 12:00:00",format="%Y-%m-%d %H:%M:%S")
 # Extract data for the selected timerange
 down_24hr <- subset(down, down$dttz_down >= startTime & down$dttz_down <= endTime)
 
-# dttz <-down$dttz
-# true_since <-down$true_since
-# # Create expanded metrics file
+## Create expanded metrics file
 # data3 <-cbind.data.frame(dttz,true_since,Amag_rollmean,odba,jerk,mheave,varheave,msurge,varsurge,msway,varsway,msa, p,r,normAcc)
-# # Create abbreviated metrics file
+## Create abbreviated metrics file
 # data4 <-cbind.data.frame(dttz,true_since,Amag_rollmean,odba,jerk,p,r)
 # Check for NAs
 sapply(down, function(x) sum(is.na(x)))
