@@ -8,6 +8,7 @@ library(ggplot2)
 library(RcppRoll)
 library(car)
 library(gridExtra)
+library(signal)
 
 setwd("~/Projects/R/TWlogger")
 tzOffset <-"Etc/GMT+3"
@@ -21,20 +22,20 @@ data <- read_csv(filename,
                  col_types = cols(
                    #dttz = col_datetime(),
                    #dt = col_datetime(),
-                   temp = col_double(), # Only comment this out for 2017 tags
+                   # temp = col_double(), # Only comment this out for 2017 tags
                    Ax = col_double(),
                    Ay = col_double(),
                    Az = col_double(),
                    Mx = col_double(),
                    My = col_double(),
                    Mz = col_double(),
-                   freq = col_double(), # Only comment this out for 2017 tags
+                   # freq = col_double(), # Only comment this out for 2017 tags
                    secs_since = col_double()))
 
 # Import down sampled data
 # Change name of dataframe for desired import
-filename <- file.choose()
-R60 <- read_csv(filename,
+filename3 <- file.choose()
+R60 <- read_csv(filename3,
                  col_types = cols(
                    dttz_down = col_datetime(),
                    true_since_down = col_double(),
@@ -47,7 +48,8 @@ R60 <- read_csv(filename,
 ########################################
 # Check dttz. Dttz has not been retaining time zone when writing to CSV 
 attr(data$dttz, "tzone") #Check tz
-attr(data$dttz, "tzone") <- "GMT"
+attr(data$dttz, "tzone") <- tzOffset
+attr(V38_1$dttz_down, "tzone") <- tzOffset
 
 # If necessary, solve myriad time zone issues specific to each season ----YEEHAW!
 
@@ -83,11 +85,12 @@ depid
 data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
 
 ## Subset data
-# startTime <- as.POSIXct(strptime("2018-07-9 06:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
-# endTime <- as.POSIXct(strptime("2018-07-09 09:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+startTime <- as.POSIXct(strptime("2017-07-7 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2017-07-07 12:30:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 ## Extract data for the selected timerange
 ## Change source data as needed
-# subset <- subset(data, data2$dttz >= startTime & data2$dttz <= endTime)
+subset1 <- subset(data2, data2$dttz >= startTime & data2$dttz <= endTime)
+V38_1 <- subset(V38, V38$dttz_down >= startTime & V38$dttz_down <= endTime)
 
 ##########################################
 ####         Downsample Data         #####
@@ -124,12 +127,16 @@ Ay_mat <- matrix(Ay,ncol=1)
 Az_mat <- matrix(Az,ncol=1)
 
 # Use decimate function
-Ax_down <- decimate(Ax_mat,5,ftype="fir")
-Ax_down <- decimate(Ax_down,10,ftype="fir")
-Ay_down <- decimate(Ay_mat,5,ftype="fir")
-Ay_down <- decimate(Ay_down,10,ftype="fir")
-Az_down <- decimate(Az_mat,5,ftype="fir")
-Az_down <- decimate(Az_down,10,ftype="fir")
+n <- 12*5
+Ax_down <- decimate(Ax_mat,5,n=n,ftype="fir")
+Ay_down <- decimate(Ay_mat,5,n=n,ftype="fir")
+Az_down <- decimate(Az_mat,5,n=n,ftype="fir")
+
+n <-12*10
+Ax_down <- decimate(Ax_down,10,n=n,ftype="fir")
+Ay_down <- decimate(Ay_down,10,n=n,ftype="fir")
+Az_down <- decimate(Az_down,10,n=n,ftype="fir")
+
 
 ## Use decdc function
 ## First downsample with df =5
@@ -254,8 +261,8 @@ odba <- odba(A, sampling_rate = fs,method="wilson",n = sw) # n is sampling windo
 # Combine down sampled acc data and metrics calculated using down sampled data
 down <- cbind.data.frame(ID,dttz_down,true_since_down,Ax_down,Ay_down,Az_down,Amag,Amag_rollmean,odba)
 
-startTime <- as.POSIXct(strptime("2018-07-11 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
-endTime <- as.POSIXct(strptime("2018-07-12 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+startTime <- as.POSIXct(strptime("2017-07-07 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2017-07-08 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 # Extract data for the selected timerange
 down_24hr <- subset(down, down$dttz_down >= startTime & down$dttz_down <= endTime)
 
@@ -291,17 +298,17 @@ sapply(down, function(x) sum(is.na(x)))
 # # require(gridExtra)
 # 
 # # Plot acc
-# p1 <- down %>%
-#   gather(axis, acc, Ax:Az) %>%
-#   ggplot(aes(dttz, acc, color = axis)) +
-#   theme(legend.position="top") +
-#   geom_line() +
-#   theme_classic() +
-#   labs(x = "Time", y = "Acceleration")
-# p1
+p1<- V38_1 %>%
+  gather(axis, acc, Ax_down:Az_down) %>%
+  ggplot(aes(dttz_down, acc, color = axis)) +
+  theme(legend.position="top") +
+  geom_line() +
+  theme_classic() +
+  labs(x = "Time", y = "Acceleration")
+p1
 # 
 # Plot Amag (or swap out other metric)
-p2 <- R60 %>%
+p2 <- V38_1 %>%
   ggplot(aes(dttz_down, Amag_rollmean),color = 'black') +
   geom_line() +
   theme_classic() +
