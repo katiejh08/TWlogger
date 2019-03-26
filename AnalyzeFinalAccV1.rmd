@@ -200,14 +200,8 @@ fs
 sw <- fs # Sets sampling window to be equal sampling rate
 
 # Magnitude of acceleration
-Ax <-datax$Ax
-Ay <-datax$Ay
-Az <-datax$Az
-Ax2 <-Ax^2
-Ay2 <-Ay^2
-Az2 <-Az^2
-Amag <- Ax2 + Ay2 + Az2
-datax$Amag <-sqrt(Amag)
+Amag <- sqrt(datax$Ax^2 + datax$Ay^2 + datax$Az^2)
+datax$Amag <-Amag
 
 # Check values
 max(datax$Amag)
@@ -215,15 +209,36 @@ mean(datax$Amag)
 min(datax$Amag)
 
 # Running mean of magnitude of acceleration
-Amag_rollmean <- roll_mean(Amag,10,fill=NA)
-Amag_rollmean[seq(1,24)] <- Amag_rollmean[25]
-Amag_rollmean[seq(length(Amag_rollmean)-24,length(Amag_rollmean))] <- Amag_rollmean[length(Amag_rollmean)-25]
-datax$Amag_rollmean <- Amag_rollmean
+# for 1Hz data, a 10 second window (+5, -5), window size is n+1 (this assumes an even windowSize)
+windowSize = 11 
+Amag_rollmean_10 <- roll_mean(datax$Amag,n=windowSize,fill=NA)
+head(Amag_rollmean_10) # this gives (n-1)/2 NA's at the front
+tail(Amag_rollmean_10) # and (n-1)/2 NA's at the end
+# replace the NA's at the beginning with the first good value
+Amag_rollmean_10[seq(1,(windowSize-1)/2)] <- Amag_rollmean_10[(windowSize-1)/2+1] # (windowSize-1)/2+1 is the first good value
+# replace the NA's at the end with the last good value
+Amag_rollmean_10[seq(length(Amag_rollmean_10)-(windowSize-1)/2+1,length(Amag_rollmean_10))] <- Amag_rollmean_10[length(Amag_rollmean_10)-(windowSize-1)/2]
+datax$Amag_rollmean_10 <- Amag_rollmean_10
 
 # Check values
-max(datax$Amag_rollmean)
-mean(datax$Amag_rollmean)
-min(datax$Amag_rollmean)
+max(datax$Amag_rollmean_10)
+mean(datax$Amag_rollmean_10)
+min(datax$Amag_rollmean_10)
+
+windowSize =31 
+Amag_rollmean_30 <- roll_mean(datax$Amag,n=windowSize,fill=NA)
+head(Amag_rollmean_30) # this gives (n-1)/2 NA's at the front
+tail(Amag_rollmean_30) # and (n-1)/2 NA's at the end
+# replace the NA's at the beginning with the first good value
+Amag_rollmean_30[seq(1,(windowSize-1)/2)] <- Amag_rollmean_30[(windowSize-1)/2+1] # (windowSize-1)/2+1 is the first good value
+# replace the NA's at the end with the last good value
+Amag_rollmean_30[seq(length(Amag_rollmean_30)-(windowSize-1)/2+1,length(Amag_rollmean_30))] <- Amag_rollmean_30[length(Amag_rollmean_30)-(windowSize-1)/2]
+datax$Amag_rollmean_30 <- Amag_rollmean_30
+
+# Check values
+max(datax$Amag_rollmean_30)
+mean(datax$Amag_rollmean_30)
+min(datax$Amag_rollmean_30)
 
 # Create matrix of acceleration data
 A <- cbind(datax$Ax,datax$Ay,datax$Az)
@@ -326,19 +341,19 @@ p1<- datax %>%
   labs(x = "Time", y = "Acceleration")
 p1
 
-# Plot Amag
+# Plot Amag_rollmean
 p2 <- datax %>%
-  ggplot(aes(dttz, y = Amag_rollmean),color = 'black') +
+  ggplot(aes(dttz, y = Amag_rollmean_10),color = 'black') +
   geom_line() +
   theme_classic() +
-  labs(x = "Time", y = "Magnitude of acceleration")
+  labs(x = "Time", y = "Running mean of magnitude of acceleration (10 sec window)")
 p2
 
 # Plot Amag_rollmean
 p3 <- datax %>%
-  ggplot(aes(x = dttz, y = Amag_rollmean),color= 'black') +
+  ggplot(aes(x = dttz, y = Amag_rollmean_30),color= 'black') +
   geom_line() +
-  labs(x = "Time", y = "Running mean of magnitude of acceleration")
+  labs(x = "Time", y = "Running mean of magnitude of acceleration (30 sec window)")
 p3
 
 # Plot ODBA
