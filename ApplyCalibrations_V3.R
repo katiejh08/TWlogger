@@ -83,12 +83,13 @@ list <- list(A = AtCal[10000:180000,])
 plott(list,50)
 MtCal <- apply_cal(Mtnarm,cal = MagCal, T = NULL)
 list <- list(M = MtCal[10000:300000,])
-plott(list,50, interactive = T)
+# plott(list,50, interactive = T)
+plott(list,50)
 
     ## NOTE: This Section is optional, only use if spikes in Mag Data.
     # Look at plotted magnetometer for bad hits and find a threshold
-    hiThresh <- 50
-    loThresh <- -35
+    hiThresh <- 45
+    loThresh <- -45
     MtCalThresh <- MtCal
     MtCalThresh[MtCalThresh > hiThresh] = NA
     MtCalThresh[MtCalThresh < loThresh] = NA
@@ -103,12 +104,12 @@ plott(list,50, interactive = T)
 
 #Save Calibrated Data Back To Dataframe
 data2 <-cbind(data[,1:4],AtCal,MtCal,data[12:14])
-#Renam Columns
+#Rename Columns
 colnames(data2) <- c("dttz","name","ts","temp","Ax","Ay","Az",
                      "Mx","My","Mz","secs_since","true_since","tsDiff")
 names(data2)
 #Save Output
-write_csv(data2, file.path(dirname(filename), paste(depid,"-Final.csv",sep="")))
+write_csv(data2, file.path(dirname(filename), paste(depid,"-50Hz.csv",sep="")))
 
 ## Optional Section to view Pitch, Roll and Heading
 #Pitch Roll and Heading

@@ -22,7 +22,7 @@ data <- read_csv(filename,
                  col_types = cols(
                    #dttz = col_datetime(),
                    #dt = col_datetime(),
-                   # temp = col_double(), # Only comment this out for 2017 tags
+                   temp = col_double(), # Only comment this out for 2017 tags
                    Ax = col_double(),
                    Ay = col_double(),
                    Az = col_double(),
@@ -32,26 +32,17 @@ data <- read_csv(filename,
                    # freq = col_double(), # Only comment this out for 2017 tags
                    secs_since = col_double()))
 
-# Import down sampled data
-# Change name of dataframe for desired import
-filename3 <- file.choose()
-R60 <- read_csv(filename3,
-                 col_types = cols(
-                   dttz_down = col_datetime(),
-                   true_since_down = col_double(),
-                   Ax_down = col_double(),
-                   Ay_down = col_double(),
-                   Az_down = col_double()))
-
 ########################################
 ####       Confirm Time Zone       #####
 ########################################
 # Check dttz. Dttz has not been retaining time zone when writing to CSV 
 attr(data$dttz, "tzone") #Check tz
-attr(data$dttz, "tzone") <- tzOffset
-attr(V38_1$dttz_down, "tzone") <- tzOffset
+# attr(data$dttz, "tzone") <- tzOffset
 
 # If necessary, solve myriad time zone issues specific to each season ----YEEHAW!
+
+# For Feb 2019 tags
+data$dttz <- force_tz(data$dttz,tzone=tzOffset)
 
 # For July 2017 tags
 # Must subtract one hour from dt and dttz (because processed in Combine and ApplyCal as if was UTC-8)
@@ -69,7 +60,7 @@ attr(V38_1$dttz_down, "tzone") <- tzOffset
 # attr(data$dttz, "tzone") #Check tz
 
 ############################################
-####  Create Deployment ID or Bird ID  #####
+####        Create Deployment ID       #####
 ############################################
 
 # Create deployment ID
@@ -85,12 +76,11 @@ depid
 data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
 
 ## Subset data
-startTime <- as.POSIXct(strptime("2017-07-7 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
-endTime <- as.POSIXct(strptime("2017-07-07 12:30:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+startTime <- as.POSIXct(strptime("2019-02-21 19:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2019-02-22 19:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 ## Extract data for the selected timerange
 ## Change source data as needed
-subset1 <- subset(data2, data2$dttz >= startTime & data2$dttz <= endTime)
-V38_1 <- subset(V38, V38$dttz_down >= startTime & V38$dttz_down <= endTime)
+data2 <- subset(data2, data2$dttz >= startTime & data2$dttz <= endTime)
 
 ##########################################
 ####         Downsample Data         #####
@@ -136,7 +126,6 @@ n <-12*10
 Ax_down <- decimate(Ax_down,10,n=n,ftype="fir")
 Ay_down <- decimate(Ay_down,10,n=n,ftype="fir")
 Az_down <- decimate(Az_down,10,n=n,ftype="fir")
-
 
 ## Use decdc function
 ## First downsample with df =5
@@ -298,9 +287,9 @@ sapply(down, function(x) sum(is.na(x)))
 # # require(gridExtra)
 # 
 # # Plot acc
-p1<- V38_1 %>%
-  gather(axis, acc, Ax_down:Az_down) %>%
-  ggplot(aes(dttz_down, acc, color = axis)) +
+p1<- datax %>%
+  gather(axis, acc, Ax:Az) %>%
+  ggplot(aes(dttz, acc, color = axis)) +
   theme(legend.position="top") +
   geom_line() +
   theme_classic() +
@@ -308,19 +297,19 @@ p1<- V38_1 %>%
 p1
 # 
 # Plot Amag (or swap out other metric)
-p2 <- V38_1 %>%
-  ggplot(aes(dttz_down, Amag_rollmean),color = 'black') +
+p2 <- datax %>%
+  ggplot(aes(dttz, Amag_rollmean),color = 'black') +
   geom_line() +
   theme_classic() +
-  labs(x = "Time", y = "Running mean of Acc mag")
+  labs(x = "Time", y = "Acc mag")
 p2
 # 
-# # Plot Amag_rollmean (or swap out other metric)
-# p3 <- down_24hr %>%
-#   ggplot(aes(x = dttz_down, y = Amag_rollmean),color= 'black') +
-#   geom_line() +
-#   labs(x = "Time", y = "Running mean acc mag")
-# p3
+# Plot Amag_rollmean (or swap out other metric)
+p3 <- datax %>%
+  ggplot(aes(x = dttz, y = Amag_rollmean),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "Running mean acc mag")
+p3
 # 
 # # Run this to create stacked plots 
 # # grid.arrange(p1, p2, p3, nrow=3)
@@ -333,25 +322,25 @@ p2
 #   labs(x = "Time", y = "ODBA")
 # op
 # 
-# ## Plot successive subsets of data and save to file
-# chunkLength <- 30 # Set this each time: length (in minutes) of chunks to plot
-# # i = 1 # Can set i to number of plots wanted and just run what's within for loop from test to p
-# # test$dttz[i] # could also name using the hh:mm of segment instead of i though need to build this out
-# 
-# for(i in 1:ceiling(nrow(data2)/(chunkLength *60*50))) {
-#   test <- data2[seq(((i-1)*chunkLength*50*60)+1,i*chunkLength*50*60),]
-#   p <- test %>%
-#     gather(axis, acc, Ax:Az) %>%
-#     ggplot(aes(dttz, acc, color = axis)) +
-#     geom_line() +
-#     theme_classic() +
-#     labs(x = "Time", y = "Acceleration") +
-#     ggtitle(depid)
-#   p
-#   # save plots as .png
-#   ggsave(p, file=paste(depid,'-',i, ".png", sep=''), scale=2)
-# }
-# 
+## Plot successive subsets of data and save to file
+chunkLength <- 30 # Set this each time: length (in minutes) of chunks to plot
+# i = 1 # Can set i to number of plots wanted and just run what's within for loop from test to p
+# test$dttz[i] # could also name using the hh:mm of segment instead of i though need to build this out
+
+for(i in 1:ceiling(nrow(datax)/(chunkLength *60*50))) {
+  test <- datax[seq(((i-1)*chunkLength*50*60)+1,i*chunkLength*50*60),]
+  p <- test %>%
+    gather(axis, acc, Ax:Az) %>%
+    ggplot(aes(dttz, acc, color = axis)) +
+    geom_line() +
+    theme_classic() +
+    labs(x = "Time", y = "Acceleration") +
+    ggtitle(depid)
+  p
+  # save plots as .png
+  ggsave(p, file=paste(depid,'-',i, ".png", sep=''), scale=2)
+}
+
 # ## Create stacked plots of successive subsets of data
 # chunkLength <- 10 # length in minutes of chunk
 # i=1
@@ -380,16 +369,6 @@ p2
 #   ggsave(p, file=paste(depid,'-',i, ".png", sep=''), scale=2)
 # }
 
-## Create interactive plot (unfinished)
-# ggplotly(p)
-
-##########################################
-####              HMM                #####
-##########################################
-# library(momentuHMM)
-# HMM is better than kmeans because of the serial dependence of acc data
-# Code coming from Roland Langrock
-
 ##########################################
 ####         Write to CSV            #####
 ##########################################
@@ -401,8 +380,7 @@ p2
 # final2 <-cbind.data.frame(dt,true_since,Amag_rollmean,odba,jerk,p,r)
 
 # Change dataframe and file name addition as needed
-write_csv(down_24hr, file.path(dirname(filename), paste(depid,"-",fs,"Hz.csv",sep="")))
-# write_csv(down10, file.path(dirname(filename), paste(depid,"-",fs,"Hz.csv",sep="")))
+write_csv(down, file.path(dirname(filename), paste(depid,"-",fs,"Hz.csv",sep="")))
 
 ##########################################
 #####

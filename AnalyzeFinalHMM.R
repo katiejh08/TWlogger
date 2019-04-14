@@ -8,21 +8,25 @@ tzOffset <-"Etc/GMT+3"
 load("~/Projects/R/TWlogger/data_for_Katie.RData")
 
 # Combine list into one dataframe
-data <-bind_rows(Amag_rollmean_states,.id="ID")
-
-# Check dttz. Dttz has not been retaining time zone when writing to CSV  
-attr(data$dttz_down, "tzone") #Check tz
-attr(data$dttz_down, "tzone") <- tzOffset
+data <-bind_rows(Amag_rollmean_states)
 
 ########################################
 ####    Calculate Sunrise/Sunset    ####
 ########################################
 
-# create Spatial Points object of Sakhalvasho coordinates
+## Create Spatial Points object of Sakhalvasho coordinates
 long <- rep(-60.09, times=nrow(data))
 lat <- rep(-51.37, times=nrow(data))
-data$long
-data$lat
+data$long <- long
+data$lat <- lat
+
+# OR leave as list and add columns using mapply
+# However, when I tried bind_rows after mapply, I lost the newly added long/lat variables
+#data <- mapply(cbind, Amag_rollmean_states, "long"=-60.09, "lat"=-51.37,SIMPLIFY=F)
+
+# Check dttz. Dttz has not been retaining time zone when writing to CSV  
+attr(data$dttz_down, "tzone") #Check tz
+attr(data$dttz_down, "tzone") <- tzOffset
 
 # Run the sunrise sunset script
 source(SunriseSunsetTimesCrepuscular.r)
@@ -33,7 +37,7 @@ source(SunriseSunsetTimesCrepuscular.r)
 # Subset by individual (OR maintain list from start and run list through
 # for loop to calculate srise and sset; that way birds are still individual dataframes)
 # Try first with one individual
-X36 <- subset(data,data$ID.1 == "X36")
+datax <- subset(data,data$ID == "X36")
 
 # OPTION 1: Calculate proportion active vs rest per bird
 # if(data$night=="day"){

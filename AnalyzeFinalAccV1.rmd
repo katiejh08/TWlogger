@@ -1,7 +1,7 @@
 ---
 title: "Analyze Rediscritized Acceleration Data"
 author: "Katie Harrington"
-date: "January 9, 2019"
+date: "March 27, 2019"
 output: 
   html_document:
     code_folding: hide
@@ -32,16 +32,18 @@ library(RcppRoll)
 library(car)
 library(gridExtra)
 library(signal)
+library(ggpubr)
 
 setwd("~/Projects/R/TWlogger")
 tzOffset <-"Etc/GMT+3"
 ```
 
 # Prep Data
-## Import Data: Option 1
+## Import Data: Option 1 (part 1 of 3)
 *Use this import option for original 50-Hz data. 
 *Includes downsampling script.
-```{r DataImport, warning=FALSE, message=FALSE, collapse = TRUE}
+
+```{r}
 # Select file to import
 filename <- file.choose()
 # Import original 50-Hz data
@@ -58,21 +60,28 @@ data <- read_csv(filename,
                    Mz = col_double(),
                    # freq = col_double(), # Comment this out for 2017/2019 tags
                    secs_since = col_double()))
-
 # Create deployment ID
 depid <- basename(filename)
 depid <- strsplit(depid,'-')
 depid <- depid[[1]][1]
 depid
-
 # Confirm correct dttz, since it has not been retaining time zone when writing to CSV 
 attr(data$dttz, "tzone") # Check tz
-# Fix Option 1
-# attr(data$dttz, "tzone") <- tzOffset # Use this to change from UTC to proper local time (time will change)
-# Fix Option 2
-data$dttz <- force_tz(data$dttz,tzone=tzOffset) # If time is correct and tz is wrong, force the tz (time will NOT change)
-attr(data$dttz, "tzone") # Check tz
+```
 
+
+## Import Data: Option 1 (part 2 of 3)
+```{r}
+# Fix Option 1
+attr(data$dttz, "tzone") <- tzOffset # Use this to change from UTC to proper local time (time will change)
+# Fix Option 2
+# data$dttz <- force_tz(data$dttz,tzone=tzOffset) # If time is correct and tz is wrong, force the tz (time will NOT change)
+attr(data$dttz, "tzone") # Check tz
+```
+
+
+## Import Data: Option 1 (part 3 of 3)
+```{r DataImport, warning=FALSE, message=FALSE, collapse = TRUE}
 # Subset to only include time and acc data
 data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
 
@@ -145,11 +154,11 @@ filename <- file.choose()
 # Import down sampled data
 test <- read_csv(filename,
                  col_types = cols(
-                   dttz_down = col_datetime(),
-                   true_since_down = col_double(),
-                   Ax_down = col_double(),
-                   Ay_down = col_double(),
-                   Az_down = col_double()))
+                   dttz = col_datetime(),
+                   true_since = col_double(),
+                   Ax = col_double(),
+                   Ay = col_double(),
+                   Az = col_double()))
 
 # Create deployment ID
 depid <- basename(filename)
@@ -169,7 +178,7 @@ attr(data$dttz, "tzone") # Check tz
 colnames(data)[1:9] <- c("ID","dttz","true_since","Ax","Ay","Az","Amag","Amag_rollmean","odba")
 
 # Set sampling rate
-# Need to write code so this calculates automatically, but haven't yet
+# KJH: Write code so this calculates automatically, but haven't yet
 fs = 1
 
 # Preserve original import data (data)
@@ -185,19 +194,34 @@ datax <- data
 length(datax$dttz)/60/60
 
 # If necessary, subset data
-startTime <- as.POSIXct(strptime("2019-02-21 16:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
-endTime <- as.POSIXct(strptime("2019-02-22 16:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+#2019
+# startTime <- as.POSIXct(strptime("2019-02-21 16:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+# endTime <- as.POSIXct(strptime("2019-02-22 16:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+#2018
+# startTime <- as.POSIXct(strptime("2018-07-08 18:30:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+# endTime <- as.POSIXct(strptime("2018-07-09 18:30:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+# startTime <- as.POSIXct(strptime("2018-07-11 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+# endTime <- as.POSIXct(strptime("2018-07-12 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+#2017 winter
+# startTime <- as.POSIXct(strptime("2017-07-07 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+# endTime <- as.POSIXct(strptime("2017-07-08 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+#2017 summer
+startTime <- as.POSIXct(strptime("2017-02-14 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2017-02-15 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+
 # Extract data for the selected timerange
 datax <- subset(datax, datax$dttz >= startTime & datax$dttz <= endTime)
+
+# Confirm length of datax in hours
+length(datax$dttz)/60/60
 ```
 
 
-## Calculate Metrics
+# Calculate Metrics
 *Import Option 2 may already include metrics.
 ```{r metrics, echo=FALSE}
 # Confirm sampling rate
 fs
-sw <- fs # Sets sampling window to be equal sampling rate
 
 # Magnitude of acceleration
 Amag <- sqrt(datax$Ax^2 + datax$Ay^2 + datax$Az^2)
@@ -212,8 +236,8 @@ min(datax$Amag)
 # for 1Hz data, a 10 second window (+5, -5), window size is n+1 (this assumes an even windowSize)
 windowSize = 11 
 Amag_rollmean_10 <- roll_mean(datax$Amag,n=windowSize,fill=NA)
-head(Amag_rollmean_10) # this gives (n-1)/2 NA's at the front
-tail(Amag_rollmean_10) # and (n-1)/2 NA's at the end
+# head(Amag_rollmean_10) # this gives (n-1)/2 NA's at the front
+# tail(Amag_rollmean_10) # and (n-1)/2 NA's at the end
 # replace the NA's at the beginning with the first good value
 Amag_rollmean_10[seq(1,(windowSize-1)/2)] <- Amag_rollmean_10[(windowSize-1)/2+1] # (windowSize-1)/2+1 is the first good value
 # replace the NA's at the end with the last good value
@@ -225,27 +249,27 @@ max(datax$Amag_rollmean_10)
 mean(datax$Amag_rollmean_10)
 min(datax$Amag_rollmean_10)
 
-windowSize =31 
-Amag_rollmean_30 <- roll_mean(datax$Amag,n=windowSize,fill=NA)
-head(Amag_rollmean_30) # this gives (n-1)/2 NA's at the front
-tail(Amag_rollmean_30) # and (n-1)/2 NA's at the end
+windowSize =3 
+Amag_rollmean_2 <- roll_mean(datax$Amag,n=windowSize,fill=NA)
+# head(Amag_rollmean_2) # this gives (n-1)/2 NA's at the front
+# tail(Amag_rollmean_2) # and (n-1)/2 NA's at the end
 # replace the NA's at the beginning with the first good value
-Amag_rollmean_30[seq(1,(windowSize-1)/2)] <- Amag_rollmean_30[(windowSize-1)/2+1] # (windowSize-1)/2+1 is the first good value
+Amag_rollmean_2[seq(1,(windowSize-1)/2)] <- Amag_rollmean_2[(windowSize-1)/2+1] # (windowSize-1)/2+1 is the first good value
 # replace the NA's at the end with the last good value
-Amag_rollmean_30[seq(length(Amag_rollmean_30)-(windowSize-1)/2+1,length(Amag_rollmean_30))] <- Amag_rollmean_30[length(Amag_rollmean_30)-(windowSize-1)/2]
-datax$Amag_rollmean_30 <- Amag_rollmean_30
+Amag_rollmean_2[seq(length(Amag_rollmean_2)-(windowSize-1)/2+1,length(Amag_rollmean_2))] <- Amag_rollmean_2[length(Amag_rollmean_2)-(windowSize-1)/2]
+datax$Amag_rollmean_2 <- Amag_rollmean_2
 
 # Check values
-max(datax$Amag_rollmean_30)
-mean(datax$Amag_rollmean_30)
-min(datax$Amag_rollmean_30)
+max(datax$Amag_rollmean_2)
+mean(datax$Amag_rollmean_2)
+min(datax$Amag_rollmean_2)
 
 # Create matrix of acceleration data
 A <- cbind(datax$Ax,datax$Ay,datax$Az)
 
-# Calculate ODBA (Need to read about Wilson method, filter pass, and n)
+# Calculate ODBA (KJH: Read about Wilson method, filter pass, and n)
 A <- cbind(datax$Ax,datax$Ay,datax$Az)
-datax$odba <- odba(A, sampling_rate = fs,method="wilson",n = sw) # n is sampling window, e.g. 50=1s
+datax$odba <- odba(A, sampling_rate = fs,method="wilson",n = fs*2) # n is sampling window, e.g. 50=1s
 # Simple plot
 # ba <- list(odba = odba)
 # plott(ba, fs=fs) # NOTE: Change if different sampling rate
@@ -325,12 +349,12 @@ sapply(datax, function(x) sum(is.na(x)))
 # varsway[seq(length(varsway)-24,length(varsway))] <- varsway[length(varsway)-25]
 ```
 
-## Plot Data
+# Plot Data
 *Plots include: (1) full 24-hr acceleration data, (2) 30-min subsets of acceleration data, (3) and full 24-hr individual metrics.
-```{r}
-# Run this to create stacked plots 
-# grid.arrange(p1, p2, p3, nrow=3)
 
+## Plot acceleration time series
+
+```{r}
 # Plot acc
 p1<- datax %>%
   gather(axis, acc, Ax:Az) %>%
@@ -340,41 +364,14 @@ p1<- datax %>%
   theme_classic() +
   labs(x = "Time", y = "Acceleration")
 p1
-
-# Plot Amag_rollmean
-p2 <- datax %>%
-  ggplot(aes(dttz, y = Amag_rollmean_10),color = 'black') +
-  geom_line() +
-  theme_classic() +
-  labs(x = "Time", y = "Running mean of magnitude of acceleration (10 sec window)")
-p2
-
-# Plot Amag_rollmean
-p3 <- datax %>%
-  ggplot(aes(x = dttz, y = Amag_rollmean_30),color= 'black') +
-  geom_line() +
-  labs(x = "Time", y = "Running mean of magnitude of acceleration (30 sec window)")
-p3
-
-# Plot ODBA
-p4 <- datax %>%
-  ggplot(aes(x = dttz, y = odba),color= 'black') +
-  geom_line() +
-  labs(x = "Time", y = "ODBA")
-p4
-
-# Plot jerk
-p5<- datax %>%
-  ggplot(aes(x = dttz, y = jerk),color= 'black') +
-  geom_line() +
-  labs(x = "Time", y = "Jerk")
-p5
+ggsave(p1, file=paste(depid,'-',"24hrAcc.png", sep=''))
 
 # Plot successive subsets of data and save to file
+# KJH: Add code for folder creation unique to each ID
 chunkLength <- 30 # Set length (in minutes) of chunks to plot
 # i = 1 # Can set number of plots to print and run for loop from test to p
-for(i in 1:ceiling(nrow(datax)/(chunkLength *60*50))) {
-  test <- datax[seq(((i-1)*chunkLength*50*60)+1,i*chunkLength*50*60),]
+for(i in 1:ceiling(nrow(datax)/(chunkLength *60))) {
+  test <- datax[seq(((i-1)*chunkLength*60)+1,i*chunkLength*60),]
   p <- test %>%
     gather(axis, acc, Ax:Az) %>%
     ggplot(aes(dttz, acc, color = axis)) +
@@ -386,28 +383,76 @@ for(i in 1:ceiling(nrow(datax)/(chunkLength *60*50))) {
   # save plots as .png
   ggsave(p, file=paste(depid,'-',i, ".png", sep=''), scale=2)
 }
+```
 
-## Plot individual metrics and axes
-## Select metric or axis to plot (do this by uncommenting selection)
-# z <- msa
-# z <- norm
-# z <- mheave
-# z <- msurge
-# z <- mway
-# z <- varheave
-# z <- varsurge
-# z <- varsway
-# varlist <- list(z = z)
-# plott(varlist,fs=fs)
+## Plot Magnitude of Acceleration and Rolling Mean of Magnitude of Acceleration
+*These are the metrics used in the 4-state HMM
+```{r}
+# Plot Amag_rollmean_10
+p2 <- datax %>%
+  ggplot(aes(dttz, y = Amag_rollmean_10),color = 'black') +
+  geom_line() +
+  theme_minimal() +
+  labs(x = "Time", y = "Amag running mean (10s window)")
+p2
 
-## Plot multiple metrics
-# multiple <- list(jerk = jerk,odba = odba,msa = msa)
-# plott(multiple,fs=fs)
+# Plot Amag_rollmean_2
+p3 <- datax %>%
+  ggplot(aes(x = dttz, y = Amag_rollmean_2),color= 'black') +
+  geom_line() +
+  theme_minimal() +
+  labs(x = "Time", y = "Amag running mean (2s window)")
+p3
+
+# Plot Amag
+p4 <- datax %>%
+  ggplot(aes(x = dttz, y = Amag),color= 'black') +
+  geom_line() +
+  theme_minimal() +
+  ylim(0,20) +
+  labs(x = "Time", y = "Amag")
+p4
+
+# Save plots
+b<-ggarrange(p2,p3,p4,nrow=3)
+ggsave(b, file=paste("Outputs/",  depid,'-',"Amags", ".png", sep=''), scale=2)
+```
+## Plot additional metrics
+```{r}
+# Plot jerk
+p5<- datax %>%
+  ggplot(aes(x = dttz, y = jerk),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "Jerk")
+p5
+
+# Plot individual metrics and axes
+# Select metric or axis to plot (do this by uncommenting selection)
+z <- msa
+z <- norm
+z <- mheave
+z <- msurge
+z <- mway
+z <- varheave
+z <- varsurge
+z <- varsway
+varlist <- list(z = z)
+plott(varlist,fs=fs)
+
+# Plot multiple metrics
+multiple <- list(jerk = jerk,odba = odba,msa = msa)
+plott(multiple,fs=fs)
 ```
 
 ## Write to CSV
 ```{r}
-write_csv(datax, file.path(dirname(filename), paste(depid,"-",fs,"Hz.csv",sep="")))
+# Full metrics
+write_csv(datax, file.path(dirname(filename), paste(depid,"-",fs,"Hz-24hr-metrics.csv",sep="")))
+# Subset for HMM
+data_subset <-datax %>% 
+  select(ID,dttz,true_since,Amag,Amag_rollmean_10,Amag_rollmean_2)
+write_csv(data_subset, file.path(dirname(filename), paste(depid,"-",fs,"Hz-24hr-Amags.csv",sep="")))
+
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -6,13 +6,13 @@
 ## For GPS/LSM303 data (for all TWLogger Version 3 units)
 # This allows the user to choose the folder containing the multiple CSV files
 #setwd("C:/Users/Musculus/Documents/R/TWlogger/00Data")
-setwd("/Users/jamesfahlbusch/Documents/Projects/R/TWlogger/00Data")
+setwd("~/Projects/R/TWlogger")
 tzOffset <- "Etc/GMT+3" # Falklands time in the winter
 
 # Specify the start and end time of deployment (NOTE: will be specific to each deployment, use local deployment time)
-startTime <- as.POSIXct(strptime("2018-07-08 17:47:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+startTime <- as.POSIXct(strptime("2019-02-21 15:12:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 # Always use logger retrieval time (regardless if retrieved before battery died)
-endTime <- as.POSIXct(strptime("2018-07-10 09:42:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2019-02-22 18:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
 
 
 # Select the first CSV of the group you want to combine
@@ -52,20 +52,20 @@ attr(accdata$dttz, "tzone") # check that dttz is in local time
 str(accdata)
 
 ##########################################################
-## NOTE this section is for tag data set to CA time!!! 
+## NOTE this section is for tag data set to CA time (re: July 2018)!!! 
 ##########################################################
 
 # create proper datetime objects
-CA_tzOffset <- "Etc/GMT+7"
-accdata$dt <- as.POSIXct(paste(accdata$date, accdata$time), format="%m/%d/%Y %H:%M:%S", tz=CA_tzOffset) # initial data is in CA time
-attr(accdata$dt, "tzone") # check timezone
-attr(accdata$dt, "tzone") <- 'GMT' # change the timezone to GMT
-accdata$dttz <- accdata$dt # set dttz to dt
-attr(accdata$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
-attr(accdata$dttz, "tzone") # check that dttz is in local time
-str(accdata)
-startTime
-endTime
+# CA_tzOffset <- "Etc/GMT+7"
+# accdata$dt <- as.POSIXct(paste(accdata$date, accdata$time), format="%m/%d/%Y %H:%M:%S", tz=CA_tzOffset) # initial data is in CA time
+# attr(accdata$dt, "tzone") # check timezone
+# attr(accdata$dt, "tzone") <- 'GMT' # change the timezone to GMT
+# accdata$dttz <- accdata$dt # set dttz to dt
+# attr(accdata$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
+# attr(accdata$dttz, "tzone") # check that dttz is in local time
+# str(accdata)
+# startTime
+# endTime
 
 # remove unused columns
 #accdata <- accdata[,c("name","dt","dttz","ts","temp","ax","ay","az","mx","my","mz","Sats","HDOP","Lat","Long","FixAge","DateUTC","TimeUTC","DateAge","Altitude","Course","Speed")]
@@ -80,14 +80,14 @@ write.csv(accdata, file=paste(deploymentName,"-COMBINED", ".csv",sep=""), row.na
 
 #simple plot (CAUTION: takes a very long time to load, depending on processing power)
 library(ggplot2)
-ggplot() +
-  geom_line(data = accdata, aes(x = dttz, y = ax,color = 'AX')) +
-  geom_line(data = accdata, aes(x = dttz, y = ay,color = 'AY')) +
-  geom_line(data = accdata, aes(x = dttz, y = az,color = 'AZ')) +
-  scale_colour_manual(name="Axis",
-                      values=c(AX="red", AY="blue", AZ="green")) +
-  ylab("Raw ACC") + 
-  xlab("Time") 
+# ggplot() +
+#   geom_line(data = accdata, aes(x = dttz, y = ax,color = 'AX')) +
+#   geom_line(data = accdata, aes(x = dttz, y = ay,color = 'AY')) +
+#   geom_line(data = accdata, aes(x = dttz, y = az,color = 'AZ')) +
+#   scale_colour_manual(name="Axis",
+#                       values=c(AX="red", AY="blue", AZ="green")) +
+#   ylab("Raw ACC") + 
+#   xlab("Time") 
 
 # Extract GPS
 gpsData <- accdata[,c("Sats","HDOP","Lat","Long","FixAge","DateUTC","TimeUTC","DateAge","Altitude","Course","Speed")]

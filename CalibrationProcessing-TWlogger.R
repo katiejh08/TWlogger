@@ -96,7 +96,8 @@ Mcrop <- crop(Mcrop$Y, Mtstruct$sampling_rate)
 # https://www.ngdc.noaa.gov/geomag-web/#igrfwmm
 # NOTE: website provides data in nano teslas, need to divide by 1000 
 # 28281.1 / 1000 = 28.2811
-fieldStrength <- 28.2811
+# 47974.5 / 1000 = 47.9745
+fieldStrength <- 49.58
 MagCal <- spherical_cal(Mcrop$Y, n = fieldStrength, method = NULL)
 
 
@@ -105,7 +106,6 @@ MagCal <- spherical_cal(Mcrop$Y, n = fieldStrength, method = NULL)
 #checking the quality of a calibration, for detecting drift, and for 
 #validating the mapping of the sensor axes to the tag axes.
 AMcheck <- check_AM(A=AccCal$Y,M= MagCal$Y,fs=50)
-
 list <- list(A = AMcheck$fstr)
 plott(list,50)
 
