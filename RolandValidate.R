@@ -9,8 +9,12 @@ library(ggpubr)
 setwd("~/Projects/R/TWlogger")
 tzOffset <-"Etc/GMT+3"
 
+#############################################################
+##  Combine all tag final metrics files with state classifications
+##                 save to R.data ##
+##     (NOTE: Only need to do this once)                   
+#############################################################
 
-#### HMM State Data Processing ####
 # Import all tag data with metrics 
 # Select the first CSV of the group you want to combine
 filename <- file.choose("Select the first CSV of the group")
@@ -31,6 +35,7 @@ attr(data$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
 
 # Load Roland's data
 load("~/Projects/R/TWlogger/data_for_Katie.RData")
+
 # Combine list into one dataframe
 dataRoland <-bind_rows(Amag_rollmean_states)
 rm(Amag_rollmean_states)
@@ -50,9 +55,13 @@ data <- data %>%
          roll = (a2pr(cbind(Ax,Ay,Az),1)$r)*(180/pi)) %>% 
   ungroup # %>%  View
 
-
 # Save workspace for later use
 save(data, file = "FinalMetrics.RData")
+
+#############################################################
+
+# Load all tag data (includes Roland's state classifications)
+load("~/Projects/R/TWlogger/FinalMetrics.RData")
 
 class(data$ID)
 # Create the function.
