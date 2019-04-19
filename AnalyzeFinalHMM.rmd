@@ -1,3 +1,19 @@
+---
+title: "Analyze Final HMM"
+author: "Katie Harrington"
+date: "April 19, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Get Started
+*This script takes a CSV file with regularly sampled, calibrated acceleration data.
+
+## Load libraries; set working directory and local time zone offset
+```{}
 library(tidyverse)
 library(dplyr)
 library(maptools) # to calculate solarpos
@@ -57,12 +73,11 @@ data[which(data$yday >= 355 | data$yday <= 79),]$season <- 'Summer'
 data$season <- as.factor(data$season)
 
 unique(data$season)
+```
+# Process Data
 
-##########################################
-####   Calculate State Proportions    ####
-##########################################
-unique(data$astronomical)
-
+## Calculate State Proportions per 24 hour cycle
+```{r}
 # Calculate state proportions per 24 hour cycle
 stateSummaryIND24 <- data %>% 
   group_by(season, ID) %>%
@@ -72,11 +87,12 @@ stateSummaryIND24 <- data %>%
   summarize(stateCountCycle = n()) %>% 
   mutate(statePropCycle = stateCountCycle/cycleLength) %>% 
   ungroup
-
 stateSummaryIND24$season_state <- paste(stateSummaryIND24$season,
-                                            stateSummaryIND24$state_classif,sep="_")
+                                        stateSummaryIND24$state_classif,sep="_")
+```
 
-# Plot state proportions per 24 hour cycle
+## Plot state proportions per 24 hour cycle
+```{r}
 Pcycle <- stateSummaryIND24 %>% 
   group_by(season) %>% 
   ggplot() +
@@ -90,8 +106,10 @@ Pcycle <- stateSummaryIND24 %>%
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 Pcycle
+```
 
-# Calculate state proportions per individual per period
+## Calculate state proportions per individual by astronomical period
+```{r}
 stateSummaryIND <- data %>% 
   group_by(season, ID, astronomical) %>% 
   mutate(periodLength = n()) %>% 
@@ -133,22 +151,12 @@ stateSummaryIND1$season_per_state <- paste(stateSummaryIND1$season,
                                           stateSummaryIND1$state_classif,sep="_")
 stateSummaryIND1$season_period <- paste(stateSummaryIND1$season,
                                        stateSummaryIND1$dayNight,sep="_")
-# Plot
-stateSummaryIND %>% 
-  group_by(season,astronomical) %>% 
-  ggplot() +
-    geom_boxplot(aes(x = season_per_state, y = stateProp, 
-                   group = season_per_state, color = season_period)) +
-    labs(x="State",
-       y = "Proportion (%)",
-       title = "State Proportions") + 
-    theme_classic(base_size = 13) + 
-    theme(plot.title = element_text(size=14)) +
-    theme(axis.text = element_text(size = 14, color = "black"),
-        axis.title.x = element_text(color="black", size=14),
-        axis.title.y = element_text(color="black", size=14))
+```
 
-# Plot each period separately
+## Plot State Proportions per individual by astronomical period
+*This creates stacked plots by Dawn, Day, Dusk, and Night
+```{r}
+# Plot dawn
 Pdawn <- stateSummaryIND %>% 
   group_by(season,astronomical) %>% 
   filter(astronomical == "dawn") %>% #View
@@ -164,6 +172,7 @@ Pdawn <- stateSummaryIND %>%
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 Pdawn
+# Plot day
 Pday <- stateSummaryIND %>% 
   group_by(season,astronomical) %>% 
   filter(astronomical == "day") %>% 
@@ -179,6 +188,7 @@ Pday <- stateSummaryIND %>%
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 Pday
+# Plot dusk
 Pdusk <- stateSummaryIND %>% 
   group_by(season,astronomical) %>% 
   filter(astronomical == "dusk") %>% 
@@ -194,6 +204,7 @@ Pdusk <- stateSummaryIND %>%
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 Pdusk
+# Plot night
 Pnight <- stateSummaryIND %>% 
   group_by(season,astronomical) %>% 
   filter(astronomical == "night") %>% 
@@ -209,14 +220,19 @@ Pnight <- stateSummaryIND %>%
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 Pnight
+
 # Stack plots to compare full cycle
 PallPeriods <- ggarrange(Pdawn,Pday,Pdusk,Pnight,nrow=2,ncol=2)
 PallPeriods
 
 # Save a file at 300 ppi
 ggsave(PallPeriods, file="Seasonal State Proportions by Period.png",width=12, height=6, dpi=300)
+```
 
-# Create day and night plots
+## Plot State Proportions by Combined Periods
+*This creates stacked plots by Day and Night
+```{r}
+# Plot combined day
 Pday2 <- stateSummaryIND1 %>% 
   group_by(season,dayNight) %>% 
   filter(dayNight == "day") %>% 
@@ -232,6 +248,7 @@ Pday2 <- stateSummaryIND1 %>%
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 Pday2
+# Plot night
 Pnight2 <- stateSummaryIND1 %>% 
   group_by(season,dayNight) %>% 
   filter(dayNight == "night") %>% 
@@ -247,9 +264,41 @@ Pnight2 <- stateSummaryIND1 %>%
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 Pnight2
+
+# Stack plots to compare full cycle
 P2Periods <- ggarrange(Pday2,Pnight2,nrow=2)
 P2Periods
+
+# Save a file at 300 ppi
 ggsave(P2Periods, file="Seasonal State Proportions by Two Periods.png",width=12, height=6, dpi=300)
+```
+
+# Calculate ODBA
+```{r}
+# Add ODBA to data
+# dataODBA <- left_join(rediscretized_data,
+#                       dplyr::select(dataset_sum, namePeriod, cycle, 
+#                                     period, astronomical), 
+#                       by = c("burst"="namePeriod"))```
+```
+
+
+## Need to identify purpose of these plots
+```{r}
+# Plot
+stateSummaryIND %>% 
+  group_by(season,astronomical) %>% 
+  ggplot() +
+    geom_boxplot(aes(x = season_per_state, y = stateProp, 
+                   group = season_per_state, color = season_period)) +
+    labs(x="State",
+       y = "Proportion (%)",
+       title = "State Proportions") + 
+    theme_classic(base_size = 13) + 
+    theme(plot.title = element_text(size=14)) +
+    theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
 
 # I forget what this following plot is used for:
 # stateSummary <- stateSummaryIND %>% 
@@ -267,9 +316,6 @@ ggsave(P2Periods, file="Seasonal State Proportions by Two Periods.png",width=12,
 #   theme(axis.text = element_text(size = 14, color = "black"),
 #         axis.title.x = element_text(color="black", size=14),
 #         axis.title.y = element_text(color="black", size=14))
+```
 
-# Add ODBA to data
-# dataODBA <- left_join(rediscretized_data,
-#                       dplyr::select(dataset_sum, namePeriod, cycle, 
-#                                     period, astronomical), 
-#                       by = c("burst"="namePeriod"))
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
