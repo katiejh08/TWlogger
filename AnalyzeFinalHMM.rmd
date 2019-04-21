@@ -461,7 +461,7 @@ testODBA <- stateODBA %>%
 testODBA
 ```
 
-## Calculate duration per state bout
+## Calculate bout length
 ```{r}
 stateBout <- stateODBA %>% 
   group_by(season,ID) %>% 
@@ -472,17 +472,192 @@ stateBout <- stateODBA %>%
   mutate(boutLength = n()/60) %>% #bout length is in minutes
   ungroup
 stateBout$state_classif <- as.factor(stateBout$state_classif)
-# Plot state bout histogram
-stateBoutSum <- stateBout %>%
-  group_by(season,ID,boutNum,state_classif) %>%
-  summarize(boutLength=first(boutLength)) 
-stateBoutSum %>% 
-  filter(ID=="M62") %>% #if want to filter, add state_classif %in% c(3,4)
-  ggplot() +
-  geom_freqpoly(aes(boutLength, group=state_classif,color=state_classif),bins=100)
-  # geom_histogram(aes(boutLength, group=state_classif,color=state_classif),bins=100)
+stateBout$activity <- ifelse(stateBout$state_classif==1|stateBout$state_classif==2,
+                             "Rest","Active")
+stateBout$hr <- hour(stateBout$dttz)
+stateBout$hr <- as.factor(stateBout$hr)
 
+# Calculate bout length
+stateBoutSum <- stateBout %>%
+  group_by(season,ID,boutNum,state_classif,dayNight,hr,activity) %>% 
+  summarize(boutLength=first(boutLength)) %>%
+  ungroup
 ```
+
+## Plot activity durations by hour to look at patterns
+```{r}
+# Plot summer daytime activity absolute duration by hour
+PdurSUd <- stateBoutSum %>% 
+  group_by(season,ID,dayNight,hr,activity) %>%
+  mutate(boutLengthDur=sum(boutLength)) %>%
+  filter(season=="Summer",
+         dayNight=="day") %>% #if want to filter, add state_classif %in% c(3,4)
+  ggplot() +
+  geom_boxplot(aes(x = hr, y = boutLengthDur, 
+                   color = activity)) +
+  labs(x="Hour of Day",
+       y = "Duration (min)",
+       title = "Summer daytime activity absolute duration by hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PdurSUd
+# Plot winter daytime activity absolute duration by hour
+PdurWId <- stateBoutSum %>% 
+  group_by(season,ID,dayNight,hr,activity) %>%
+  mutate(boutLengthDur=sum(boutLength)) %>%
+  filter(season=="Winter",
+         dayNight=="day") %>% #if want to filter, add state_classif %in% c(3,4)
+  ggplot() +
+  geom_boxplot(aes(x = hr, y = boutLengthDur, 
+                   color = activity)) +
+  labs(x="Hour of Day",
+       y = "Duration (min)",
+       title = "Winter daytime activity absolute duration by hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PdurWId
+PdurSeasd <- ggarrange(PdurSUd,PdurWId,nrow=2)
+PdurSeasd
+
+# Plot summer nighttime activity absolute duration by hour
+PdurSUn <- stateBoutSum %>% 
+  group_by(season,ID,dayNight,hr,activity) %>%
+  mutate(boutLengthDur=sum(boutLength)) %>%
+  filter(season=="Summer",
+         dayNight=="night") %>% #if want to filter, add state_classif %in% c(3,4)
+  ggplot() +
+  geom_boxplot(aes(x = hr, y = boutLengthDur, 
+                   color = activity)) +
+  labs(x="Hour of Day",
+       y = "Duration (min)",
+       title = "Summer nighttime activity absolute duration by hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PdurSUn
+# Plot winter nighttime activity absolute duration by hour
+PdurWIn <- stateBoutSum %>% 
+  group_by(season,ID,dayNight,hr,activity) %>%
+  mutate(boutLengthDur=sum(boutLength)) %>%
+  filter(season=="Winter",
+         dayNight=="night") %>% #if want to filter, add state_classif %in% c(3,4)
+  ggplot() +
+  geom_boxplot(aes(x = hr, y = boutLengthDur, 
+                   color = activity)) +
+  labs(x="Hour of Day",
+       y = "Duration (min)",
+       title = "Winter nighttime activity absolute duration by hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PdurWIn
+PdurSeasn <- ggarrange(PdurSUn,PdurWIn,nrow=2)
+PdurSeasn
+```
+
+
+## Plot seasonal daytime mean activity bouts by hour. 
+```{r}
+# Plot summer daytime mean activity bouts by hour
+PboutSUd <- stateBoutSum %>% 
+  group_by(season,ID,dayNight,activity,hr) %>%
+  summarize(mboutLength=mean(boutLength)) %>%
+  ungroup %>% # Do I need to ungroup and regroup?
+  group_by(season,ID,dayNight,hr,activity,mboutLength) %>%
+  filter(season=="Summer",
+         dayNight=="day") %>% #if want to filter, add state_classif %in% c(3,4)
+  ggplot() +
+  geom_boxplot(aes(x = hr, y = mboutLength, 
+                   color = activity)) +
+  labs(x="Hour of Day",
+       y = "Bout Length (min)",
+       title = "Summer daytime mean activity bout by hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PboutSUd
+
+# Plot winter daytime mean activity bouts by hour
+PboutWId <- stateBoutSum %>% 
+  group_by(season,ID,dayNight,activity,hr) %>%
+  summarize(mboutLength=mean(boutLength)) %>%
+  ungroup %>% # Do I need to ungroup and regroup?
+  group_by(season,ID,dayNight,hr,activity,mboutLength) %>%
+  filter(season=="Winter",
+         dayNight=="day") %>% #if want to filter, add state_classif %in% c(3,4)
+  ggplot() +
+  geom_boxplot(aes(x = hr, y = mboutLength, 
+                   color = activity)) +
+  labs(x="Hour of Day",
+       y = "Bout Length (min)",
+       title = "Winter daytime mean activity bout by hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PboutWId
+PboutSeasd <- ggarrange(PboutSUd,PboutWId,nrow=2)
+PboutSeasd
+
+# Plot summer nighttime mean activity bouts by hour
+PboutSUn <- stateBoutSum %>% 
+  group_by(season,ID,dayNight,activity,hr) %>%
+  summarize(mboutLength=mean(boutLength)) %>%
+  ungroup %>% # Do I need to ungroup and regroup?
+  group_by(season,ID,dayNight,hr,activity,mboutLength) %>%
+  filter(season=="Summer",
+         dayNight=="night") %>% #if want to filter, add state_classif %in% c(3,4)
+  ggplot() +
+  geom_boxplot(aes(x = hr, y = mboutLength, 
+                   color = activity)) +
+  labs(x="Hour of Day",
+       y = "Bout Length (min)",
+       title = "Summer nighttime mean activity bout by hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PboutSUn
+
+# Plot winter nighttime mean activity bouts by hour
+PboutWIn <- stateBoutSum %>% 
+  group_by(season,ID,dayNight,activity,hr) %>%
+  summarize(mboutLength=mean(boutLength)) %>%
+  ungroup %>% # Do I need to ungroup and regroup?
+  group_by(season,ID,dayNight,hr,activity,mboutLength) %>%
+  filter(season=="Winter",
+         dayNight=="night") %>% #if want to filter, add state_classif %in% c(3,4)
+  ggplot() +
+  geom_boxplot(aes(x = hr, y = mboutLength, 
+                   color = activity)) +
+  labs(x="Hour of Day",
+       y = "Bout Length (min)",
+       title = "Winter nighttime mean activity bout by hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PboutWIn
+
+PboutSeasn <- ggarrange(PboutSUn,PboutWIn,nrow=2)
+PboutSeasn
+```
+
 
 
 ## Need to identify purpose of these plots
