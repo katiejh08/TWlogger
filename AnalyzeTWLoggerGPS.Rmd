@@ -1,0 +1,168 @@
+---
+title: "AnalyzeTWLoggerGPS"
+author: "Katie Harrington"
+date: "April 21, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Get Started
+*This file takes ... and does ...
+
+## Load libraries; set working directory and local time zone offset
+
+```{r echo=FALSE}
+library(tidyverse)
+library(dplyr)
+library(maptools) # to calculate solarpos
+library(stringr)
+library(lubridate)
+library(adehabitatLT)
+#library(argosfilter)
+library(geosphere)
+library(ggpubr)
+library(sp)
+library(rgdal)
+library(tibble)
+library("rnaturalearth")
+library("rnaturalearthdata")
+library("sf")
+library("ggspatial")
+library(marmap)
+library(mapdata)
+library(metR)
+source('UTMConversionfxns.R')
+
+# Set the Working Directory
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path ))
+rm(current_path)
+getwd()
+
+tzOffset <-"Etc/GMT+3"
+```
+
+## Combine Data and calculate summary stats
+```{r warning=FALSE}
+# Select file to import
+filename <- file.choose()
+# Import IGU GPS data (ScriptOutputs from KML builder scripts)
+pathChoice <- dirname(filename)
+# This imports all CSV files in the directory chosen
+filenames <- list.files(path = pathChoice, pattern = "*.csv", all.files = FALSE, full.names = TRUE, recursive = FALSE, ignore.case = TRUE)
+# Create an empty dataframe to hold all the data
+dataset = data.frame()
+# Iteratively import CSV files from each deployment, find sunrise and sunset times, and create columns for sorting and processing.
+for(i in 1:length(filenames)) {
+  data <- read_csv(filenames[i])#, sep=",",header=TRUE)
+  # select only columns with name, lat, long, etc.
+  data <- data[,c("name","lat","long","dttz","dt","date")]
+   # extract deployment name from filename
+  name <- strsplit(filenames[i],"[.]")[[1]][1] # This removes the .CSV
+  name <- str_replace_all(name,"\\\\","/") # this makes it work for both windows and mac
+  name <- sapply(strsplit(name,"[/]"),tail,1) # Take just the filename
+  name <- str_replace(name,"_ScriptOutput","") # Split at the '_ScriptOutput' for just the deployment name
+  data$name <- name
+  # Create DateTime (UTC)
+  data$dt  <- as.POSIXct(strptime(data$dt,format="%Y-%m-%d %H:%M:%S"),tz="GMT")
+  # Convert to local time
+  data$dttz <- data$dt # set dttz to dt
+  attr(data$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
+  data <- data %>% arrange(dttz)
+  # Create useful identifiers
+  data$date <- as.Date(data$dttz, tz = tzOffset)
+  data$yr <- year(data$dttz)
+  data$mth <- month(data$dttz)
+  data$hr <- hour(data$dttz)	
+  data$yday <- yday(data$dttz)
+  data$yday <- sprintf('%03d',data$yday)
+  data$yday <- paste('D',data$yday,sep='')
+  data$indday <- as.factor(paste(data$name, data$yday, sep ='_', collapse = NULL))
+
+  # Calculate distance between consecutive points
+  source('Point2Point-stats.R')
+  # Determine Solar Position for each point
+  source('SunriseSunsetTimes.R')
+  
+  astro_data <- data %>%
+  arrange(dttz) %>%
+  #Tidy up some unused columns
+  mutate(period = cumsum(replace_na(lag(astronomical) != astronomical, 1)),  
+         cycle = floor(period / 4))
+  #convert dur (time between consecutive points) to minutes
+  astro_data$dur <- astro_data$dur*60 
+  # Combine into Dataset
+  if(i==1) dataset <- astro_data else dataset <- rbind(dataset,astro_data)
+}
+
+# Check for NAs
+sapply(dataset, function(x) sum(is.na(x)))
+
+```
+
+## Rediscretize data
+```{r}
+# add unique identifier to group by name and period in plots
+dataset$namePeriod <- paste(dataset$name, dataset$period, sep = "-")
+#### Rediscretize Data ####
+dataset_SP <- longlat_to_UTM(dataset$long,dataset$lat)
+dataset_SP_All <-bind_cols(dataset_SP,dataset) # combine all data
+dataset_SP_All <- SpatialPointsDataFrame(cbind(dataset_SP$x, dataset_SP$y), dataset_SP_All, match.ID = FALSE)
+dataset_SP_All <- dataset_SP_All[!duplicated(dataset_SP_All$dt),] # remove duplicate times
+# make sure there are no duplicate times (JAF)
+dataset_SP_All$dt[duplicated(dataset_SP_All$dt)] 
+# Inputs for AdeHabitatLT Resicretization Function
+xy <- coordinates(dataset_SP_All)
+id <- dataset_SP_All$name
+da <- dataset_SP_All$dt
+burstAll <- dataset_SP_All$namePeriod 
+
+# Create a Trajectory (used in Rediscretization function)
+# burst allows each period to be rediscretized individually
+litr <- as.ltraj(xy, da, burst = burstAll, id,  typeII = TRUE)
+#head(litr)
+plot(litr)
+## Rediscretize Trajectories
+reLitr <- redisltraj(litr, 300, burst = burst, type = "time") # 300 seconds is 5 minutes
+#head(reLitr)
+plot(reLitr)
+# Convert to Dataframe
+rediscretized_data <- ld(reLitr)
+
+# Summary of exclusions
+dataset_sum <- dataset %>% 
+  subset(.,select = c(astronomical, cycle, period, namePeriod)) %>% 
+  distinct %>% 
+  mutate(namePeriod = as.factor(namePeriod))
+class(dataset_sum$namePeriod)
+class(rediscretized_data$burst)
+
+# Join Exclusion data to rediscretized data
+redist_Astro <- left_join(rediscretized_data, 
+                         dplyr::select(dataset_sum, namePeriod, cycle, period, astronomical), by = c("burst"="namePeriod"))
+redist_Astro <- redist_Astro %>% arrange(id,cycle,period)
+redist_Astro$mth <- month(redist_Astro$date)
+attr(redist_Astro$date, "tzone")
+redist_Astro$dt <- redist_Astro$date
+redist_Astro$dttz <- redist_Astro$dt
+attr(redist_Astro$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
+redist_Astro$yday <- yday(redist_Astro$dttz)
+
+# Determine Season (calculated from 2017 solstices and equinoxes)
+redist_Astro$season <- rep('NA')
+redist_Astro[which(redist_Astro$yday > 79 & redist_Astro$yday <= 171),]$season <- 'Fall'
+redist_Astro[which(redist_Astro$yday > 171 & redist_Astro$yday <= 265),]$season <- 'Winter'
+redist_Astro[which(redist_Astro$yday > 265 & redist_Astro$yday < 355),]$season <- 'Spring'
+redist_Astro[which(redist_Astro$yday >= 355 | redist_Astro$yday <= 79),]$season <- 'Summer'
+unique(redist_Astro$season)
+distanceSummary <- redist_Astro %>% 
+  group_by(season, id,cycle, period, astronomical) %>% 
+  summarize(periodDist = sum(dist,na.rm = TRUE),
+            periodmeanDist = mean(dist,na.rm = TRUE),
+            periodSDdist = sd(dist,na.rm = TRUE))
+#distanceSummary %>% filter(season == "Spring") %>% View()
+
+```
