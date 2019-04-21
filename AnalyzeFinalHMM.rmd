@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 *This file takes ... and does ...
 
 ## Load libraries; set working directory and local time zone offset
-```{}
+```{r}
 library(tidyverse)
 library(dplyr)
 library(maptools) # to calculate solarpos
@@ -41,7 +41,7 @@ tzOffset <-"Etc/GMT+3"
 # Pre Process Data
 ```{r}
 # Load R workspace
-load("~/Projects/R/TWlogger/data_for_Katie.RData")
+load("~/Projects/R/TWlogger/data_with_states.RData")
 
 # Combine list into one dataframe
 data <-bind_rows(data_with_states)
@@ -65,19 +65,18 @@ sapply(data, function(x) sum(is.na(x)))
 # Determine Season (calculated from 2018 solstices and equinoxes)
 data$yday <- yday(data$dttz)
 data$season <- rep('NA')
-data[which(data$yday > 79 & data$yday <= 173),]$season <- 'Fall'
+#data[which(data$yday > 79 & data$yday <= 173),]$season <- 'Fall'
 data[which(data$yday > 173 & data$yday <= 265),]$season <- 'Winter'
-data[which(data$yday > 265 & data$yday < 355),]$season <- 'Spring'
+#data[which(data$yday > 265 & data$yday < 355),]$season <- 'Spring'
 data[which(data$yday >= 355 | data$yday <= 79),]$season <- 'Summer'
 data$season <- as.factor(data$season)
 
 unique(data$season)
 ```
 
-
 # Process Data
 
-## Calculate State Proportions per 24 hour cycle
+## Calculate State Proportions per 24hr cycle
 *No longer running this script
 ```{r}
 # # Calculate state proportions per 24 hour cycle
@@ -93,7 +92,7 @@ unique(data$season)
 #                                         stateSummaryIND24$state_classif,sep="_")
 ```
 
-## Plot state proportions per 24 hour cycle
+## Plot state proportions per 24hr cycle
 *No longer running this script
 ```{r}
 Pcycle <- stateSummaryIND24 %>% 
@@ -112,8 +111,9 @@ Pcycle
 ```
 
 ## Calculate state proportions per individual by astronomical period
+*No longer creating these plots because Dawn+Day+Dusk have been combined
 ```{r}
-# Calculate with 4 periods (dawn, day, dusk, night)
+# Calculate state proportions with 4 periods (dawn, day, dusk, night)
 stateSummaryIND <- data %>% 
   group_by(season, ID, astronomical) %>% 
   mutate(periodLength = n()) %>% 
@@ -132,8 +132,11 @@ stateSummaryIND$season_per_state <- paste(stateSummaryIND$season,
                                           stateSummaryIND$state_classif,sep="_")
 stateSummaryIND$season_period <- paste(stateSummaryIND$season,
                                           stateSummaryIND$astronomical,sep="_")
+```
 
-# Reduce to two periods day and night (e.g. combine dawn, day, and dusk)
+## Calculate state proportions per individual by 2 periods (day+night)
+```{r}
+# Calculate state proportions with 2 periods (day and night)
 stateSummaryIND2period <- data %>% 
   group_by(season, ID) %>% 
   mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"day","night")) %>%
@@ -151,7 +154,6 @@ stateSummaryIND2period <- data %>%
 # Create vectors to retain groupings for plots
 stateSummaryIND2period$ID <- as.factor(stateSummaryIND2period$ID)
 stateSummaryIND2period$dayNight <- as.factor(stateSummaryIND2period$dayNight)
-str(stateSummaryIND2period)
 stateSummaryIND2period$season_per_state <- paste(stateSummaryIND2period$season,
                                           stateSummaryIND2period$dayNight,
                                           stateSummaryIND2period$state_classif,sep="_")
@@ -161,6 +163,7 @@ stateSummaryIND2period$season_period <- paste(stateSummaryIND2period$season,
 
 ## Plot State Proportions per individual by astronomical period
 *This creates stacked plots by Dawn, Day, Dusk, and Night
+*No longer creating these plots because Dawn+Day+Dusk have been combined
 ```{r}
 # Plot dawn
 Pdawn <- stateSummaryIND %>% 
@@ -245,6 +248,7 @@ Pday2 <- stateSummaryIND2period %>%
   ggplot() +
   geom_boxplot(aes(x = state_classif, y = stateProp2, 
                    group = season_per_state, color = season)) +
+  ylim(0,1) +
   labs(x="State",
        y = "Proportion (%)",
        title = "State Proportions (Dawn to Dusk)") + 
@@ -261,6 +265,7 @@ Pnight2 <- stateSummaryIND2period %>%
   ggplot() +
   geom_boxplot(aes(x = state_classif, y = stateProp2, 
                    group = season_per_state, color = season)) +
+  ylim(0,1) +
   labs(x="State",
        y = "Proportion (%)",
        title = "State Proportions (Night)") + 
@@ -283,12 +288,13 @@ ggsave(P2Periods, file="Seasonal State Proportions by Two Periods.png",width=12,
 *This creates stacked plots per day and night of absolute duration and state proportion
 ```{r}
 # Plot combined day
-PdayDur <- stateSummaryIND2period %>% 
+PdayDur <- stateSummaryIND2period %>%# View
   group_by(season,dayNight) %>% 
   filter(dayNight == "day") %>% 
   ggplot() +
   geom_boxplot(aes(x = state_classif, y = stateCountHour, 
                    group = season_per_state, color = season)) +
+  ylim(0,15) +
   labs(x="State",
        y = "Duration (hr)",
        title = "State Durations per Individual (Dawn to Dusk)") + 
@@ -299,12 +305,13 @@ PdayDur <- stateSummaryIND2period %>%
         axis.title.y = element_text(color="black", size=14))
 PdayDur
 # Plot night
-PnightDur <- stateSummaryIND2period %>% 
+PnightDur <- stateSummaryIND2period %>% #View
   group_by(season,dayNight) %>% 
   filter(dayNight == "night") %>% 
   ggplot() +
   geom_boxplot(aes(x = state_classif, y = stateCountHour, 
                    group = season_per_state, color = season)) +
+  ylim(0,15) +
   labs(x="State",
        y = "Duration (hr)",
        title = "State Durations per Individual (Night)") + 
@@ -320,18 +327,21 @@ PcycleDur <- ggarrange(PdayDur,PnightDur,nrow=2)
 PcycleDur
 
 # Save a file at 300 ppi
-ggsave(PcycleDur, file="Seasonal State Durations by Two Periods.png",width=12, height=6, dpi=300)
-```
+ggsave(PcycleDur, file="Seasonal State Durations by Two Periods.png",width=8, height=8, dpi=300)
 
-## Compare state proportions and absolute durations per period
-```{r}
+
 # Stack plots to compare full cycle of state proportion and absolute duration
 PpropDur <-ggarrange(PdayDur,PnightDur,Pday2,Pnight2,nrow=2,ncol=2)
 PpropDur
 # Save a file at 300 ppi
 ggsave(PpropDur, file="Compare State Proportion and Duration.png",width=12, height=6, dpi=300)
 
-# Statistical test to check for difference in state duration between summer and winter days
+```
+
+## Compare state proportions and absolute durations per period
+```{r}
+# Test for difference in state duration between summer and winter day
+# This subsets by day/night and filters for season, day, and state 4.
 seasdiffdur1 <- stateSummaryIND2period %>% 
   subset(.,select = c(season,dayNight,state_classif,stateCountHour)) %>%
   filter(dayNight == "day",
@@ -348,21 +358,25 @@ seasdiffdur2 <- stateSummaryIND2period %>%
   # spread(season,stateCountHour) 
 seasdiffdur2$stateCountHourSU <- seasdiffdur2$stateCountHour
 seasdiffdur2$stateCountHour <- NULL
-# seasdiffdur <- cbind(seasdiffdur1,seasdiffdur2) %>% 
-#   subset(.,select = c(season,dayNight,state_classif,stateCountHourWI,stateCountHourSU))
 shapiro.test(seasdiffdur1$stateCountHourWI)
 shapiro.test(seasdiffdur2$stateCountHourSU)
 test <- stats::t.test(seasdiffdur1$stateCountHourWI,seasdiffdur2$stateCountHourSU)
 test
+
+seasdiffdurState4 <- cbind(seasdiffdur1$stateCountHourWI,seasdiffdur2$stateCountHourSU)
+colnames(seasdiffdurState4) <- c("stateCountHourWI", "stateCountHourSU")
+write_csv(as.data.frame(seasdiffdurState4),file.path(getwd(),"state4duration.csv"))
 ```
 
 
-# Calculate ODBA
+# Add ODBA and raw acc data to state classifications dataframe
 ```{r}
-# Add ODBA to data
-datax <- data # ODBA contained in this df at 1Hz
-datax <- subset(datax, select = -c(Ax,Ay,Az,Amag,Amag_rollmean_10,Amag_rollmean,state_classif,pitch,roll))
-stateODBA <- left_join(data,dplyr::select(datax,ID, dttz, odba, jerk), by = c("ID", "dttz"))
+# rename data while we import ODBA (also called data)
+stateData <- data
+# load Final Metrics (ODBA)
+load("~/Projects/R/TWlogger/FinalMetrics.RData")
+# Add acc data to stateData
+stateODBA <- left_join(stateData,dplyr::select(data,ID,dttz,Ax,Ay,Az,odba, jerk), by = c("ID","dttz"))
 stateODBA <- stateODBA %>% 
   group_by(season, ID) %>% 
   mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"day","night")) %>%
@@ -370,17 +384,49 @@ stateODBA <- stateODBA %>%
 # Check for NAs
 sapply(stateODBA, function(x) sum(is.na(x)))
 
+# Create SolarMidnight based hourly bins
+stateODBA$solarMidnight <- hms::as.hms((stateODBA$solarnoon- dhours(12)),tz = tzOffset)
+stateODBA$time <- hms::as.hms(stateODBA$dttz,tz = tzOffset)
+stateODBA$timeBin <- floor(as.numeric(difftime(stateODBA$time, stateODBA$solarMidnight,units = "hours")))
+stateODBA$timeBin <- ifelse(stateODBA$timeBin < 0,stateODBA$timeBin+24,stateODBA$timeBin)
+stateODBA$hr <- hour(data$dttz)
+stateODBA$odbaG <- stateODBA$odba/9.81
+
+# save.image()
+# save(stateODBA,file="stateODBA.RData")
 ```
 
-##Plot ODBA
+## Plot ODBA
 ```{r}
+# Plots to assess rhythmicity and seasonality of behavior?
+Podba24su <- stateODBA %>%
+  filter(season == "Summer") %>% #View
+  group_by(ID, hr) %>%
+  summarize(odbaGSum = sum(odbaG,na.rm = TRUE),
+            amagSum = sum(Amag_rollmean_2,na.rm = TRUE)) %>% 
+  ggplot() +
+  geom_line(aes(x=hr, y=odbaGSum, group=ID,color=ID))
+Podba24su
+
+Podba24wi <- stateODBA %>%
+  filter(season == "Winter") %>% #View
+  group_by(ID, timeBin) %>%
+  summarize(odbaSum = sum(odba,na.rm = TRUE)) %>% 
+  ggplot() +
+  geom_line(aes(x=timeBin, y=odbaSum, group=ID,color=ID))
+Podba24wi
+
+#stateODBA %>% filter(ID == "Z55",timeBin == 14 ) %>% View
+
+
+Podba24test <- stateODBA %>%
+  filter(season == "Summer") %>% #View
+  ggplot() +
+  geom_line(aes(x=time, y=Amag, group=ID,color=ID))
+Podba24test
 # Cumulative sum of odba per state per period by season
 
-
-
-
 # Boxplot of sum of ODBA per state per period by season
-
 
 # Boxplot of sum of ODBA per period by season
 PodbaNight <- stateODBA %>% 
@@ -399,10 +445,42 @@ PodbaNight <- stateODBA %>%
         axis.title.y = element_text(color="black", size=14))
 PodbaNight
 
+testODBA <- stateODBA %>% 
+  filter(ID == "X36",
+         hr == 10) %>% 
+  ggplot() +
+  geom_line(aes(x=dttz,y=odbaG)) +
+  labs(x="Time",
+       y = "ODBA (g)",
+       title = "X36 ODBA") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+testODBA
+```
 
-
-
-
+## Calculate duration per state bout
+```{r}
+stateBout <- stateODBA %>% 
+  group_by(season,ID) %>% 
+  arrange(dttz) %>%
+  mutate(boutNum = cumsum(replace_na(lag(state_classif) != state_classif, 1))) %>%
+  ungroup %>% 
+  group_by(season,ID,boutNum) %>% 
+  mutate(boutLength = n()/60) %>% #bout length is in minutes
+  ungroup
+stateBout$state_classif <- as.factor(stateBout$state_classif)
+# Plot state bout histogram
+stateBoutSum <- stateBout %>%
+  group_by(season,ID,boutNum,state_classif) %>%
+  summarize(boutLength=first(boutLength)) 
+stateBoutSum %>% 
+  filter(ID=="M62") %>% #if want to filter, add state_classif %in% c(3,4)
+  ggplot() +
+  geom_freqpoly(aes(boutLength, group=state_classif,color=state_classif),bins=100)
+  # geom_histogram(aes(boutLength, group=state_classif,color=state_classif),bins=100)
 
 ```
 
