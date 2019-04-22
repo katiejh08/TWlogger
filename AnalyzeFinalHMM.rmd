@@ -128,6 +128,7 @@ data_states <- data_states %>%
          ODBA=abs(dyn_Ax+dyn_Ay+dyn_Az)) %>% 
   ungroup #%>% View
 
+data_states$state <-ifelse(data_states$state_classif==1|data_states$state_classif==2,"Rest","Active")
 save(data_states,file="data_states.RData")
 ```
 
@@ -428,37 +429,83 @@ write_csv(as.data.frame(seasdiffdurState4),file.path(getwd(),"state4duration.csv
 ```
 
 ## Plot ODBA
+*Seasonal total ODBA per solar hour
+*Seasonal mean ODBA per solar hour
 ```{r}
-# Plots to assess rhythmicity and seasonality of behavior?
-Podba24su <- stateODBA %>%
+# Seasonal total ODBA per solar hour
+PodbaSum24Wu <- data_states %>%
   filter(season == "Summer") %>% #View
-  group_by(ID, hr) %>%
-  summarize(odbaGSum = sum(odbaG,na.rm = TRUE),
-            amagSum = sum(Amag_rollmean_2,na.rm = TRUE)) %>% 
+  group_by(ID, timeBin) %>%
+  summarize(odbaGSum = sum(ODBA/9.81,na.rm = TRUE)) %>% 
   ggplot() +
-  geom_line(aes(x=hr, y=odbaGSum, group=ID,color=ID))
-Podba24su
-
-Podba24wi <- stateODBA %>%
+  geom_line(aes(x=timeBin, y=odbaGSum, group=ID,color=ID)) +
+  labs(x="Solar Hour",
+       y = "Total ODBA (g)",
+       title = "Summer total ODBA per solar hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PodbaSum24Su
+PodbaSum24Wi <- data_states %>%
   filter(season == "Winter") %>% #View
   group_by(ID, timeBin) %>%
-  summarize(odbaSum = sum(odba,na.rm = TRUE)) %>% 
+  summarize(odbaGSum = sum(ODBA/9.81,na.rm = TRUE)) %>% 
   ggplot() +
-  geom_line(aes(x=timeBin, y=odbaSum, group=ID,color=ID))
-Podba24wi
+  geom_line(aes(x=timeBin, y=odbaGSum, group=ID,color=ID))+
+  labs(x="Solar Hour",
+       y = "Total ODBA (g)",
+       title = "Winter total ODBA per solar hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PodbaSum24Wi
+Podba24Seas <- ggarrange(PodbaSum24Su,PodbaSum24Wi,nrow=2)
+Podba24Seas
+# Save a file at 300 ppi
+ggsave(Podba24seas, file="Seasonal total ODBA per solar hour.png",width=12, height=6, dpi=300)
 
-#stateODBA %>% filter(ID == "Z55",timeBin == 14 ) %>% View
-
-
-Podba24test <- stateODBA %>%
+# Mean odba per solar hour by season
+PodbaMeanSu <- data_states %>%
   filter(season == "Summer") %>% #View
+  group_by(ID,timeBin) %>%
+  summarize(odbaGMean = mean(ODBA/9.81,na.rm = TRUE)) %>% 
   ggplot() +
-  geom_line(aes(x=time, y=Amag, group=ID,color=ID))
-Podba24test
+  geom_line(aes(x=timeBin, y=odbaGMean, group=ID,color=ID)) +
+  labs(x="Solar Hour",
+       y = "Mean ODBA (g)",
+       title = "Summer mean ODBA per solar hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PodbaMeanSu
+PodbaMeanWi <- data_states %>%
+  filter(season == "Winter") %>% #View
+  group_by(ID, timeBin) %>%
+  summarize(odbaGMean = mean(ODBA/9.81,na.rm = TRUE)) %>% 
+  ggplot() +
+  geom_line(aes(x=timeBin, y=odbaGMean, group=ID,color=ID)) +
+  labs(x="Solar Hour",
+       y = "Mean ODBA (g)",
+       title = "Winter mean ODBA per solar hour") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PodbaMeanWi
+# PodbaMeanSeas <- ggarrange(PodbaMeanSu,PodbaMeanWi,nrow=2)
+PodbaMeanSeas
+# Save a file at 300 ppi
+ggsave(PodbaMeanSeas, file="Seasonal mean ODBA per solar hour.png",width=12, height=6, dpi=300)
+
 # Cumulative sum of odba per state per period by season
-
 # Boxplot of sum of ODBA per state per period by season
-
 # Boxplot of sum of ODBA per period by season
 PodbaNight <- stateODBA %>% 
   group_by(season,ID,dayNight) %>%
@@ -475,21 +522,6 @@ PodbaNight <- stateODBA %>%
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 PodbaNight
-
-testODBA <- stateODBA %>% 
-  filter(ID == "X36",
-         hr == 10) %>% 
-  ggplot() +
-  geom_line(aes(x=dttz,y=odbaG)) +
-  labs(x="Time",
-       y = "ODBA (g)",
-       title = "X36 ODBA") + 
-  theme_classic(base_size = 13) + 
-  theme(plot.title = element_text(size=14)) +
-  theme(axis.text = element_text(size = 14, color = "black"),
-        axis.title.x = element_text(color="black", size=14),
-        axis.title.y = element_text(color="black", size=14))
-testODBA
 ```
 
 ## Calculate bout length
@@ -516,7 +548,7 @@ stateBout$timeBin <- ifelse(stateBout$timeBin < 0,stateBout$timeBin+24,stateBout
 stateBout$timeBin <- as.factor(stateBout$timeBin)
 
 # Calculate bout length
-stateBoutSum <- stateBout %>%
+stateBoutSummary <- stateBout %>%
   group_by(season,ID,boutNum,state_classif,dayNight,timeBin,state) %>%
   summarize(boutLength=first(boutLength)) %>%
   ungroup
@@ -739,4 +771,3 @@ PboutWIn <- stateBoutSum %>%
 PboutSeasn <- ggarrange(PboutSUn,PboutWIn,nrow=2)
 PboutSeasn
 ```
-

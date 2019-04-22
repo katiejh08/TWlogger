@@ -53,25 +53,43 @@ filename <- file.choose()
 pathChoice <- dirname(filename)
 # This imports all CSV files in the directory chosen
 filenames <- list.files(path = pathChoice, pattern = "*.csv", all.files = FALSE, full.names = TRUE, recursive = FALSE, ignore.case = TRUE)
+
+# Load deployment times from CSV
+depTimes <- read_csv(paste0(getwd(),"/depTimes.csv"))
+depTimes$startTime <- as.POSIXct(strptime(depTimes$startTime,format="%m/%d/%Y %H:%M"),tz="GMT")
+depTimes$endTime <- as.POSIXct(strptime(depTimes$endTime,format="%m/%d/%Y %H:%M"),tz="GMT")
+
 # Create an empty dataframe to hold all the data
 dataset = data.frame()
 # Iteratively import CSV files from each deployment, find sunrise and sunset times, and create columns for sorting and processing.
 for(i in 1:length(filenames)) {
-  data <- read_csv(filenames[i])#, sep=",",header=TRUE)
+  data <- read_csv(filenames[i],
+                   col_types = cols(TimeUTC = col_character(),
+                                    Lat = col_double(),
+                                    Long = col_double()))
   # select only columns with name, lat, long, etc.
-  data <- data[,c("name","lat","long","dttz","dt","date")]
+  data <- data[,c("Lat","Long","DateUTC","TimeUTC")]
    # extract deployment name from filename
   name <- strsplit(filenames[i],"[.]")[[1]][1] # This removes the .CSV
   name <- str_replace_all(name,"\\\\","/") # this makes it work for both windows and mac
   name <- sapply(strsplit(name,"[/]"),tail,1) # Take just the filename
-  name <- str_replace(name,"_ScriptOutput","") # Split at the '_ScriptOutput' for just the deployment name
+  name <- sapply(strsplit(name,"[_]"),tail,1) # Take just the filename
+  name <- sapply(strsplit(name,"[-]"),head,1) # Take just the filename
   data$name <- name
   # Create DateTime (UTC)
-  data$dt  <- as.POSIXct(strptime(data$dt,format="%Y-%m-%d %H:%M:%S"),tz="GMT")
+  data$dt  <- as.POSIXct(strptime(paste(data$DateUTC, data$TimeUTC,sep=" "),format = "%m/%d/%Y %H:%M:%S"), tz="GMT")
+  attr(data$dt, "tzone") # Check tz
+   # select only columns with name, lat, long, etc.
+  data <- data[,c("name","dt", "Lat","Long")]
+  colnames(data) <- c("name","dt","lat","long")
   # Convert to local time
   data$dttz <- data$dt # set dttz to dt
   attr(data$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
   data <- data %>% arrange(dttz)
+  startTime <- depTimes %>% filter(ID == name) %>% .$startTime
+  endTime <- depTimes %>% filter(ID == name) %>% .$endTime
+  data <- subset(data, data$dttz >= startTime & data$dttz <= endTime)
+
   # Create useful identifiers
   data$date <- as.Date(data$dttz, tz = tzOffset)
   data$yr <- year(data$dttz)
@@ -87,20 +105,21 @@ for(i in 1:length(filenames)) {
   # Determine Solar Position for each point
   source('SunriseSunsetTimes.R')
   
-  astro_data <- data %>%
+  data <- data %>%
   arrange(dttz) %>%
   #Tidy up some unused columns
   mutate(period = cumsum(replace_na(lag(astronomical) != astronomical, 1)),  
          cycle = floor(period / 4))
   #convert dur (time between consecutive points) to minutes
-  astro_data$dur <- astro_data$dur*60 
+  data$dur <- data$dur*60 
   # Combine into Dataset
-  if(i==1) dataset <- astro_data else dataset <- rbind(dataset,astro_data)
+  if(i==1) dataset <- data else dataset <- rbind(dataset,data)
 }
 
 # Check for NAs
 sapply(dataset, function(x) sum(is.na(x)))
-
+# cleanup
+rm(v1, v2, v3,xy, i, name,data)
 ```
 
 ## Rediscretize data
@@ -126,13 +145,15 @@ litr <- as.ltraj(xy, da, burst = burstAll, id,  typeII = TRUE)
 #head(litr)
 plot(litr)
 ## Rediscretize Trajectories
-reLitr <- redisltraj(litr, 300, burst = burst, type = "time") # 300 seconds is 5 minutes
+reLitr <- redisltraj(litr, 120, burst = burst, type = "time") # 120 seconds is 2 minutes
+reLitr5min<- redisltraj(litr, 300, burst = burst, type = "time") # 300 seconds is 5 minutes
 #head(reLitr)
 plot(reLitr)
 # Convert to Dataframe
 rediscretized_data <- ld(reLitr)
+rediscretized_data5min <- ld(reLitr5min)
 
-# Summary of exclusions
+
 dataset_sum <- dataset %>% 
   subset(.,select = c(astronomical, cycle, period, namePeriod)) %>% 
   distinct %>% 
@@ -140,7 +161,7 @@ dataset_sum <- dataset %>%
 class(dataset_sum$namePeriod)
 class(rediscretized_data$burst)
 
-# Join Exclusion data to rediscretized data
+# Join dataset to rediscretized data
 redist_Astro <- left_join(rediscretized_data, 
                          dplyr::select(dataset_sum, namePeriod, cycle, period, astronomical), by = c("burst"="namePeriod"))
 redist_Astro <- redist_Astro %>% arrange(id,cycle,period)
@@ -150,7 +171,12 @@ redist_Astro$dt <- redist_Astro$date
 redist_Astro$dttz <- redist_Astro$dt
 attr(redist_Astro$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
 redist_Astro$yday <- yday(redist_Astro$dttz)
-
+redist_Astro <- redist_Astro %>% 
+  group_by(season,id) %>% 
+  mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"day","night")) %>%
+  ungroup
+redist_Astro$ID <- redist_Astro$id
+redist_Astro$id <- NULL
 # Determine Season (calculated from 2017 solstices and equinoxes)
 redist_Astro$season <- rep('NA')
 redist_Astro[which(redist_Astro$yday > 79 & redist_Astro$yday <= 171),]$season <- 'Fall'
@@ -163,6 +189,5 @@ distanceSummary <- redist_Astro %>%
   summarize(periodDist = sum(dist,na.rm = TRUE),
             periodmeanDist = mean(dist,na.rm = TRUE),
             periodSDdist = sd(dist,na.rm = TRUE))
-#distanceSummary %>% filter(season == "Spring") %>% View()
-
 ```
+
