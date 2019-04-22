@@ -110,6 +110,9 @@ data_states <- data_states %>%
          static_Ay=roll_mean(Ay,windowSize,fill=NA),
          static_Az=roll_mean(Az,windowSize,fill=NA)) %>%
   ungroup
+
+### THIS NEEDS LOVE- only replaces the first and last set of NA's. What about the others!
+
 # Replace the NA's at the beginning with the first good value
 data_states$static_Ax[seq(1,(windowSize-1)/2)] <- data_states$static_Ax[(windowSize-1)/2+1] # (windowSize-1)/2+1 is the first good value
 data_states$static_Ay[seq(1,(windowSize-1)/2)] <- data_states$static_Ay[(windowSize-1)/2+1]
@@ -553,7 +556,6 @@ stateBoutSummary <- stateBout %>%
   summarize(boutLength=first(boutLength)) %>%
   ungroup
 ```
-
 ## Plot seasonal activity durations by hour to look at patterns
 *This plots rest and active by solar hour
 ```{r}
