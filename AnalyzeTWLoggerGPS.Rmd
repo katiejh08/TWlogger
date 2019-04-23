@@ -224,9 +224,64 @@ GPS_states <- FullAccStatesGPS2 %>%
   # Join GPS data 
   left_join(GPS_data, by = c("ID", "gps_hit")) %>% 
   drop_na(dttz) 
-
-
+# rm(FullAccStatesGPS2)
+# rm(GPS_data)
+# GPS_data <- GPS_data %>% 
+GPS_statesSP <-   SpatialPointsDataFrame(cbind(GPS_states$x, GPS_states$y), GPS_states, match.ID = FALSE)
+crds <-   UTM_to_longlat(GPS_statesSP,20,'south')
+colnames(crds) <- c('long','lat')
+GPS_states$lat <- crds$lat
+GPS_states$long <- crds$long
+GPS_states$state <-as.factor(GPS_states$state)
 ```
+
+## Plot GPS positions with state classifications
+```{r echo=FALSE}
+library(ggplot2)
+library(ggmap)
+library(maps)
+library(mapdata)
+library(rstudioapi)
+library(argosfilter)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(ggmap)
+library(maps)
+library(mapdata)
+library(devtools)
+# if(!requireNamespace("devtools")) 
+# install.packages("devtools") 
+# devtools::install_github("dkahle/ggmap")
+
+register_google(key = "AIzaSyAHRpFoa86K8IXnsIo1H3fLjWyhorawZew")
+has_google_key()
+mapZoom <- 13 # KJH!! Adjust this to fit all the data (20 is all the way zoomed in)
+#plot the extent of this map (NOTE: must adjust zoom parameter)
+myMap <-  get_googlemap(center = c(lon = mean(c(min(GPS_states$long), max(GPS_states$long))),  lat = mean(c(min(GPS_states$lat),max(GPS_states$lat)))),
+                        zoom = mapZoom, 
+                        size = c(640,400),
+                        scale = 2,
+                        extent="device",
+                        maptype="hybrid", #"terrain"
+                        style = c(feature = "all", element = "labels", visibility = "off"))
+
+xyState <- ggplot() +
+  geom_point(data = GPS_states,
+             aes(x=long,y=lat, color = state)) +
+  labs(x="Longitude",
+       y = "Latitude",
+       title = "State Distribution") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))#,
+        #legend.position="none")
+xyState
+```
+
+
 
 ## Plots -- directly copied from JRspatial (still need to update)
 ```{r}
