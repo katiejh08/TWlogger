@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 *This file takes ... and does ...
 
 ## Load libraries; set working directory and local time zone offset
-```{r echo=FALSE}
+```{r echo=FALSE,warning=FALSE}
 library(tidyverse)
 library(dplyr)
 library(maptools) # to calculate solarpos
@@ -33,6 +33,7 @@ library("ggspatial")
 library(marmap)
 library(mapdata)
 library(metR)
+library(RcppRoll)
 
 setwd("~/Projects/R/TWlogger")
 tzOffset <-"Etc/GMT+3"
@@ -112,15 +113,28 @@ data_states <- data_states %>%
   ungroup
 
 ### THIS NEEDS LOVE- only replaces the first and last set of NA's. What about the others!
+#arrange, split by ID, add depDay (will be either 1st or 2nd day of deployment), filter by depDay, 
 
 # Replace the NA's at the beginning with the first good value
-data_states$static_Ax[seq(1,(windowSize-1)/2)] <- data_states$static_Ax[(windowSize-1)/2+1] # (windowSize-1)/2+1 is the first good value
-data_states$static_Ay[seq(1,(windowSize-1)/2)] <- data_states$static_Ay[(windowSize-1)/2+1]
-data_states$static_Az[seq(1,(windowSize-1)/2)] <- data_states$static_Az[(windowSize-1)/2+1]
-# replace the NA's at the end with the last good value
-data_states$static_Ax[seq(length(data_states$static_Ax)-(windowSize-1)/2+1,length(data_states$static_Ax))] <- data_states$static_Ax[length(data_states$static_Ax)-(windowSize-1)/2]
-data_states$static_Ay[seq(length(data_states$static_Ay)-(windowSize-1)/2+1,length(data_states$static_Ay))] <- data_states$static_Ay[length(data_states$static_Ay)-(windowSize-1)/2]
-data_states$static_Az[seq(length(data_states$static_Az)-(windowSize-1)/2+1,length(data_states$static_Az))] <- data_states$static_Az[length(data_states$static_Az)-(windowSize-1)/2]
+data_states <- data_states %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>%
+  mutate(naUp = ifelse(row_number()<=(windowSize-1)/2+1,1,0),
+         naDown = ifelse(row_number() > n() - ((windowSize-1)/2+1),1,0)) %>%# View
+  ungroup %>% 
+  group_by(ID,naUp) %>% 
+  mutate(static_Ax = ifelse(naUp == 1,last(static_Ax),static_Ax),
+         static_Ay = ifelse(naUp == 1,last(static_Ay),static_Ay),
+         static_Az = ifelse(naUp == 1,last(static_Az),static_Az)) %>% 
+  ungroup %>% 
+  group_by(ID,naDown) %>% 
+  mutate(static_Ax = ifelse(naDown == 1,first(static_Ax),static_Ax),
+         static_Ay = ifelse(naDown == 1,first(static_Ay),static_Ay),
+         static_Az = ifelse(naDown == 1,first(static_Az),static_Az)) %>% 
+  ungroup
+data_states$naUp <- NULL
+data_states$naDown <- NULL
+
 # Calculate dynamic (raw-static) and ODBA (sum abs dynamic)
 data_states <- data_states %>%
   arrange(ID,dttz) %>%

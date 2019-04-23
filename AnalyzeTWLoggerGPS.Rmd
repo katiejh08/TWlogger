@@ -13,8 +13,8 @@ knitr::opts_chunk$set(echo = TRUE)
 *This file takes ... and does ...
 
 ## Load libraries; set working directory and local time zone offset
-
-```{r echo=FALSE}
+*NOTE: Saunders is in UTM20S 
+```{r echo=FALSE, warnings=FALSE}
 library(tidyverse)
 library(dplyr)
 library(maptools) # to calculate solarpos
@@ -46,7 +46,7 @@ tzOffset <-"Etc/GMT+3"
 ```
 
 ## Combine Data and calculate summary stats
-```{r warning=FALSE}
+```{r warnings=FALSE}
 # Select file to import
 filename <- file.choose()
 # Import IGU GPS data (ScriptOutputs from KML builder scripts)
@@ -56,8 +56,8 @@ filenames <- list.files(path = pathChoice, pattern = "*.csv", all.files = FALSE,
 
 # Load deployment times from CSV
 depTimes <- read_csv(paste0(getwd(),"/depTimes.csv"))
-depTimes$startTime <- as.POSIXct(strptime(depTimes$startTime,format="%m/%d/%Y %H:%M"),tz="GMT")
-depTimes$endTime <- as.POSIXct(strptime(depTimes$endTime,format="%m/%d/%Y %H:%M"),tz="GMT")
+depTimes$startTime <- as.POSIXct(strptime(depTimes$startTime,format="%m/%d/%Y %H:%M"),tz=tzOffset)
+depTimes$endTime <- as.POSIXct(strptime(depTimes$endTime,format="%m/%d/%Y %H:%M"),tz=tzOffset)
 
 # Create an empty dataframe to hold all the data
 dataset = data.frame()
@@ -123,6 +123,7 @@ rm(v1, v2, v3,xy, i, name,data)
 ```
 
 ## Rediscretize data
+*Saves rediscretized data (2min) as redist_Astro.RData
 ```{r}
 # add unique identifier to group by name and period in plots
 dataset$namePeriod <- paste(dataset$name, dataset$period, sep = "-")
@@ -185,9 +186,125 @@ redist_Astro[which(redist_Astro$yday > 265 & redist_Astro$yday < 355),]$season <
 redist_Astro[which(redist_Astro$yday >= 355 | redist_Astro$yday <= 79),]$season <- 'Summer'
 unique(redist_Astro$season)
 distanceSummary <- redist_Astro %>% 
-  group_by(season, id,cycle, period, astronomical) %>% 
+  group_by(season, ID,dayNight) %>% 
   summarize(periodDist = sum(dist,na.rm = TRUE),
             periodmeanDist = mean(dist,na.rm = TRUE),
             periodSDdist = sd(dist,na.rm = TRUE))
+save(redist_Astro,file="redist_Astro.RData")
+```
+
+## Add states to GPS
+```{r}
+# Load R workspace
+load("~/Projects/R/TWlogger/data_states.RData")
+FullAccStatesGPS <- left_join(data_states, redist_Astro, by = c("ID"="id","dttz"))
+
+# Function for getting the mode of a vector
+mode <- function(x) {
+  unique_x <- unique(x)
+  unique_x[which.max(tabulate(match(x, unique_x)))]
+}
+
+# columns of interest are ID, dttz, state_classif, x, y
+FullAccStatesGPS2 <- FullAccStatesGPS %>% 
+  group_by(ID) %>% 
+  # This associates each acceleration value with the following GPS hit
+  mutate(gps_hit = lag(cumsum(!is.na(x)), default = 0))
+
+# Just the GPS data
+GPS_data <- FullAccStatesGPS2 %>% 
+  drop_na(date.y) %>% 
+  dplyr::select(ID, gps_hit, dt, dttz, x, y)
+
+GPS_states <- FullAccStatesGPS2 %>% 
+  # For each bird's GPS hit...
+  group_by(ID, gps_hit) %>% 
+  # Find the state mode for the associated acceleration values
+  summarize(state = mode(state_classif)) %>% 
+  # Join GPS data 
+  left_join(GPS_data, by = c("ID", "gps_hit")) %>% 
+  drop_na(dttz) 
+
+
+```
+
+## Plots -- directly copied from JRspatial (still need to update)
+```{r}
+# Cumulative distance per bird per period
+bp1 <- ggplot() +
+  geom_boxplot(data = distanceSummary,
+             aes(x=dayNight,y=periodDist, color = season)) +
+  labs(x="Period",
+       y = "Distance (m)",
+       title = "Cumulative distance per bird by day and night") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))#,
+        #legend.position="none")
+bp1
+# Mean step length per bird per period (still does not account for deployment lengths; i.e. a bird with a 3 day deployment will have 3 periods of day and therefore 3 means for day.
+bp2 <- ggplot() +
+  geom_boxplot(data = distanceSummary,
+             aes(x=astronomical,y=periodmeanDist, color = season))+
+  labs(x="Period",
+       y = "Mean step length (m)",
+       title = "Mean step length per bird by ungrouped periods") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))#,
+        #legend.position="none")
+bp2
+ds2<- distanceSummary %>% 
+  group_by(season,id,astronomical) %>% 
+  summarize(indMeanPeriodDist = mean(periodDist),
+            indMeanPeriodMeanDist = mean(periodmeanDist))
+# Mean of cumulative distance per bird by astronomical
+bp3 <- ggplot() +
+  geom_boxplot(data = ds2,
+             aes(x=astronomical,y=indMeanPeriodDist, color = season))+
+  labs(x="Period",
+       y = "Mean distance (m)",
+       title = "Mean cumulative distance per bird by grouped periods") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))#,
+        #legend.position="none")
+bp3
+# Mean of mean step length per bird per astronomical (accounts for deployment lengths; i.e. a bird with a 3 day deployment will have 3 periods of day, find the mean per day and then find a mean across days); This graph is the group mean of individual means.
+# This is a mean of 34 means per period
+bp4 <- ggplot() +
+  geom_boxplot(data = ds2,
+             aes(x=astronomical,y=indMeanPeriodMeanDist, color = season)) +
+   labs(x="Period",
+       y = "Mean step length (m)",
+       title = "Mean step length per bird by grouped periods") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))#,
+        #legend.position="none")
+bp5 <- ggplot() +
+  geom_boxplot(data = ds2,
+             aes(x=astronomical,y=indMeanPeriodMeanDist, color = season)) +
+   labs(x="Period",
+       y = "Mean step length (m)",
+       title = "Mean step length per bird by grouped periods") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))#,
+        #legend.position="none")
+bpall <- ggarrange(bp1,bp2,bp3,bp4,nrow=2,ncol=2)
+# This will save a file at 300 ppi
+ggsave(bpall, file="Seasonal Mean Distance and Step Lengths.png",width=12, height=6, dpi=300)
 ```
 
