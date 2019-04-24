@@ -20,6 +20,7 @@ data$dusk <- crepuscule(data$crds, data$dates, solarDep=12, direction=c("dusk"),
 
 # Calculate solar position (altitude)
 data$solarpos <- solarpos(data$crds, data$dttz)[,2]
+data$solarnoon <- solarnoon(data$crds, data$dttz,POSIXct.out=TRUE)[,2]
 
 # determine if point is during night or day
 data$night <- ifelse(data$dttz < data$srise | data$dttz > data$sset,'night','day')
@@ -31,4 +32,6 @@ data$astronomical <- ifelse(hms::as.hms(data$dttz,tz = tzOffset) > hms::as.hms(d
 
 drops <- c("dates","crds","season")
 data <- data[ , !(names(data) %in% drops)]
-
+rm(crds)
+rm(drops)
+rm(dates)

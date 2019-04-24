@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Load libraries; set working directory and local time zone offset
 *NOTE: Saunders is in UTM20S 
-```{r echo=FALSE, warnings=FALSE}
+```{r echo=FALSE, warning=FALSE}
 library(tidyverse)
 library(dplyr)
 library(maptools) # to calculate solarpos
@@ -35,6 +35,25 @@ library(marmap)
 library(mapdata)
 library(metR)
 source('UTMConversionfxns.R')
+library(ggplot2)
+library(ggmap)
+library(maps)
+library(mapdata)
+library(rstudioapi)
+library(argosfilter)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(ggmap)
+library(maps)
+library(mapdata)
+library(devtools)
+library(RColorBrewer)
+# if(!requireNamespace("devtools")) 
+# install.packages("devtools")
+# devtools::install_github("dkahle/ggmap")
+register_google(key = "AIzaSyAHRpFoa86K8IXnsIo1H3fLjWyhorawZew")
+has_google_key()
 
 # Set the Working Directory
 current_path = rstudioapi::getActiveDocumentContext()$path 
@@ -233,53 +252,329 @@ colnames(crds) <- c('long','lat')
 GPS_states$lat <- crds$lat
 GPS_states$long <- crds$long
 GPS_states$state <-as.factor(GPS_states$state)
+
+# Recalculate astronomical
+data <- GPS_states
+# Create useful identifiers
+data$date <- as.Date(data$dttz, tz = tzOffset)
+data$yr <- year(data$dttz)
+data$mth <- month(data$dttz)
+data$hr <- hour(data$dttz)	
+data$yday <- yday(data$dttz)
+data$yday <- sprintf('%03d',data$yday)
+data$yday <- paste('D',data$yday,sep='')
+data$indday <- as.factor(paste(data$name, data$yday, sep ='_', collapse = NULL))
+source('SunriseSunsetTimes.R')
+GPS_states <- data
+# Determine Season (calculated from 2017 solstices and equinoxes)
+GPS_states$yday <- yday(GPS_states$dttz)
+GPS_states$season <- rep('NA')
+GPS_states[which(GPS_states$yday > 79 & GPS_states$yday <= 171),]$season <- 'Fall'
+GPS_states[which(GPS_states$yday > 171 & GPS_states$yday <= 265),]$season <- 'Winter'
+GPS_states[which(GPS_states$yday > 265 & GPS_states$yday < 355),]$season <- 'Spring'
+GPS_states[which(GPS_states$yday >= 355 | GPS_states$yday <= 79),]$season <- 'Summer'
+unique(GPS_states$season)
+
+#Combine astronomical to day and night
+GPS_states <- GPS_states %>% 
+  group_by(season,ID) %>% 
+  mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"Day","Night")) %>%
+  ungroup
 ```
 
-## Plot GPS positions with state classifications
-```{r echo=FALSE}
-library(ggplot2)
-library(ggmap)
-library(maps)
-library(mapdata)
-library(rstudioapi)
-library(argosfilter)
-library(tidyverse)
-library(lubridate)
-library(ggplot2)
-library(ggmap)
-library(maps)
-library(mapdata)
-library(devtools)
-# if(!requireNamespace("devtools")) 
-# install.packages("devtools") 
-# devtools::install_github("dkahle/ggmap")
+## Data filters for plotting GPS positions with state classifications
+```{r echo=FALSE, warnings=FALSE}
+# Filter summer by day and night
+xyStateSUd <- GPS_states %>%
+  filter(season=="Summer",
+         dayNight=="Day")
+xyStateSUn <- GPS_states %>%
+  filter(season=="Summer",
+         dayNight=="Night")
 
-register_google(key = "AIzaSyAHRpFoa86K8IXnsIo1H3fLjWyhorawZew")
-has_google_key()
-mapZoom <- 13 # KJH!! Adjust this to fit all the data (20 is all the way zoomed in)
-#plot the extent of this map (NOTE: must adjust zoom parameter)
-myMap <-  get_googlemap(center = c(lon = mean(c(min(GPS_states$long), max(GPS_states$long))),  lat = mean(c(min(GPS_states$lat),max(GPS_states$lat)))),
-                        zoom = mapZoom, 
-                        size = c(640,400),
+# Filter summer by states
+xyStateSU4 <- GPS_states %>%
+  filter(season=="Summer",
+         state=="4")
+xyStateSU3 <- GPS_states %>%
+  filter(season=="Summer",
+         state=="3")
+xyStateSU2 <- GPS_states %>%
+  filter(season=="Summer",
+         state=="2")
+xyStateSU1 <- GPS_states %>%
+  filter(season=="Summer",
+         state=="1")
+
+# Filter by winter
+xyStateWI <- GPS_states %>%
+  filter(season=="Winter")
+
+# Filter winter by states
+xyStateWI4 <- GPS_states %>%
+  filter(season=="Winter",
+         state=="4")
+xyStateWI3 <- GPS_states %>%
+  filter(season=="Winter",
+         state=="3")
+xyStateWI2 <- GPS_states %>%
+  filter(season=="Winter",
+         state=="2")
+xyStateWI1 <- GPS_states %>%
+  filter(season=="Winter",
+         state=="1")
+
+
+
+# Set zoom. Adjust this to fit all the data (20 is all the way zoomed in)
+mapZoomSU <- 14 
+mapZoomWI <- 12 
+
+# Plot the extent of this map (NOTE: must adjust zoom parameter)
+myMapSU <-  get_googlemap(center = c(lon = mean(c(min(xyStateSU$long), max(xyStateSU$long))),  
+                                   lat = mean(c(min(xyStateSU$lat),max(xyStateSU$lat)))),
+                        zoom = mapZoomSU, 
                         scale = 2,
                         extent="device",
                         maptype="hybrid", #"terrain"
                         style = c(feature = "all", element = "labels", visibility = "off"))
+myMapWI <-  get_googlemap(center = c(lon = mean(c(min(xyStateWI$long), max(xyStateWI$long))),  
+                                   lat = mean(c(min(xyStateWI$lat),max(xyStateWI$lat)))),
+                        zoom = mapZoomWI, 
+                        scale = 2,
+                        extent="device",
+                        maptype="hybrid", #"terrain"
+                        style = c(feature = "all", element = "labels", visibility = "off"))
+# State Colors (4 states)
+colState4 <- c("4" = "#B2182B", "3" = "#F4A582", "2" = "#92C5DE", "1"= "#2166AC")
+# State Colors (2 states)
+colState2 <- c("4" = "#B2182B", "3" = "#B2182B", "2" = "#2166AC", "1"= "#2166AC")
 
-xyState <- ggplot() +
-  geom_point(data = GPS_states,
-             aes(x=long,y=lat, color = state)) +
+shapeSU <- c("B50"=0, "C51"=1, "G53"=2, "M57"=3, "X56"=4, "Z55"=5, "Z59"=6)
+
+# THIS NEEDS LOVE: Do density of points? Smaller points? 
+PxyStateSUd <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSUd,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
+  scale_color_manual(values = colState4) +
+  scale_shape_manual(values = shapeSU) + 
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
   labs(x="Longitude",
        y = "Latitude",
-       title = "State Distribution") + 
-  theme_classic(base_size = 13) + 
+       title = "Summer daytime distribution of states") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
   theme(plot.title = element_text(size=14)) +
   theme(axis.text = element_text(size = 14, color = "black"),
         axis.title.x = element_text(color="black", size=14),
-        axis.title.y = element_text(color="black", size=14))#,
-        #legend.position="none")
-xyState
+        axis.title.y = element_text(color="black", size=14))# +
+  # facet_wrap(~ ID, nrow=3)
+# PxyStateSUd
+
+PxyStateSUn <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSUn,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
+  scale_color_manual(values = colState4) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y = "Latitude",
+       title = "Summer nighttime distribution of states") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))# +
+  # facet_wrap(~ ID, nrow=3)
+# PxyStateSUn
+
+PxyStateSU <- ggarrange(PxyStateSUd,PxyStateSUn,nrow=2)
 ```
+
+
+## Create Summer plots, one per state, colored by ID
+```{r}
+PxyStateSU4 <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSU4,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y="Latitude",
+       title = "Summer distribution of state 4") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PxyStateSU4
+PxyStateSU3 <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSU3,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y = "Latitude",
+       title = "Summer distribution of state 3") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PxyStateSU3
+PxyStateSU2 <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSU2,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y = "Latitude",
+       title = "Summer distribution of state 2") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PxyStateSU2
+PxyStateSU1 <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSU1,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y = "Latitude",
+       title = "Summer distribution of state 1") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PxyStateSU4
+
+PxyStateSUperState <- ggarrange(PxyStateSU1,PxyStateSU2,PxyStateSU3,PxyStateSU4,nrow=2,ncol=2)
+PxyStateSUperState
+# This will save a file at 300 ppi
+ggsave(PxyStateSUperState, file="Summer distribution of states.png",width=12, height=6, dpi=300)
+```
+
+
+## Create winter plots, one per state, colored by ID
+```{r}
+PxyStateWI4 <- ggmap(myMapWI) + 
+  geom_point(data = xyStateWI4,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y="Latitude",
+       title = "Winter distribution of state 4") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PxyStateWI4
+PxyStateWI3 <- ggmap(myMapWI) + 
+  geom_point(data = xyStateWI3,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y = "Latitude",
+       title = "Winter distribution of state 3") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PxyStateWI3
+PxyStateWI2 <- ggmap(myMapWI) + 
+  geom_point(data = xyStateWI2,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y = "Latitude",
+       title = "Winter distribution of state 2") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PxyStateWI2
+PxyStateWI1 <- ggmap(myMapWI) + 
+  geom_point(data = xyStateWI1,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y = "Latitude",
+       title = "Winter distribution of state 1") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+# PxyStateWI1
+
+PxyStateWIperState <- ggarrange(PxyStateWI1,PxyStateWI2,PxyStateWI3,PxyStateWI4,nrow=2,ncol=2)
+PxyStateWIperState
+# This will save a file at 300 ppi
+ggsave(PxyStateWIperState, file="Winter distribution of states.png",width=12, height=6, dpi=300)
+
+```
+
+## Plot time series by 10 minute intervals
+```{r}
+depTimeP<- GPS_states %>%
+  arrange(dttz) %>% 
+  group_by(season) %>% 
+  summarize(lasttime=last(dttz),
+            firsttime=first(dttz))
+
+# Summer	last = 2019-02-22 15:58:18	first = 2019-02-21 16:00:17		
+timePSU <- seq.POSIXt(from=depTimeP$firsttime[depTimeP$season=="Summer"],
+                      to = depTimeP$lasttime[depTimeP$season=="Summer"],
+                      by = "2 mins")
+
+# Winter	last = 2018-07-12 11:59:03	first = 2018-07-08 18:30:23
+timePWI <- seq.POSIXt(from=depTimeP$firsttime[depTimeP$season=="Winter"],
+                      to = depTimeP$lasttime[depTimeP$season=="Winter"],
+                      by = "2 mins")
+
+# Select time of interest
+tOI <- 1:length(timePSU)
+#i=13
+for (i in tOI) {
+
+  # Filter Bird locations for that period
+  # This is plu or minus 300 seconds from the timeP[i]
+  jrOI <- GPS_states %>% 
+    filter(dttz<=timePSU[i]+120 & dttz>=timePSU[i]-120 )
+  
+  # THIS NEEDS LOVE: Do density of points? Smaller points? 
+p <- ggmap(myMapSU) + 
+  geom_point(data = jrOI,aes(x=long,y=lat, color = state, shape = ID),alpha=1,size=1) +
+  scale_color_manual(values = colState4) +
+  scale_shape_manual(values = shapeSU) + 
+  scale_alpha(guide = 'none') +
+  #oord_fixed(1.3) +
+  labs(x="Longitude",
+       y = "Latitude") + 
+  ggtitle(sprintf("%s (local)", timePSU[i])) + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))# +
+p
+  # This will save a file at 300 ppi
+  ggsave(sprintf("Outputs/SummerTWLoggerGPS_%i.png", i ), width=6, height=6, dpi=300)
+}
+```
+
+
 
 
 
