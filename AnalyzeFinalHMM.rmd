@@ -212,16 +212,18 @@ stateSummaryIND$season_period <- paste(stateSummaryIND$season,
                                           stateSummaryIND$astronomical,sep="_")
 ```
 
-### Calculate state proportions per individual by 2 periods (day+night)
+### Calculate 4-state proportions by 2 periods (day and night)
 *Creates stateSummaryIND2period
+*Statistical test of seasonal differences in daytime durations of state 3 and state 4
+
 ```{r}
-# Calculate state proportions (4 states) with 2 periods (day and night)
+# Calculate 4-state proportions for by 2 periods
 stateSummaryIND2period <- data_states %>% 
   group_by(season, ID) %>% 
   mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"day","night")) %>%
   ungroup %>% 
   group_by(season, ID, dayNight) %>% 
-  mutate(periodLength2 = n()) %>% 
+  mutate(periodLength2 = n()) %>%
   ungroup %>% 
   group_by(season, ID, dayNight, state_classif,periodLength2) %>% 
   summarize(stateCount2 = n()) %>% 
@@ -238,10 +240,73 @@ stateSummaryIND2period$season_per_state <- paste(stateSummaryIND2period$season,
                                           stateSummaryIND2period$state_classif,sep="_")
 stateSummaryIND2period$season_period <- paste(stateSummaryIND2period$season,
                                        stateSummaryIND2period$dayNight,sep="_")
+
+# Statistical test of seasonal differences in daytime state 3
+stateSummaryIND2period$state_classif <- as.factor(stateSummaryIND2period$state_classif)
+daytimeState3 <- stateSummaryIND2period %>% 
+  group_by(season,ID,dayNight,state_classif,stateCountHour) %>%
+  filter(dayNight=="day",
+         state_classif=="3") %>%
+  ungroup
+
+shapiro.test(daytimeState3$stateCountHour)
+t.test(stateCountHour ~ season, data = daytimeState3, var.equal = TRUE)
+wilcox.test(stateCountHour ~ season, data = daytimeState3, var.equal = TRUE)
+
+# Statistical test of seasonal differences in daytime state 4
+daytimeState4 <- stateSummaryIND2period %>% 
+  group_by(season,ID,dayNight,state_classif,stateCountHour) %>%
+  filter(dayNight=="day",
+         state_classif=="4") %>%
+  ungroup
+
+shapiro.test(daytimeState4$stateCountHour) # p-value = 0.05814
+t.test(stateCountHour ~ season, data = daytimeState4, var.equal = TRUE)
+wilcox.test(stateCountHour ~ season, data = daytimeState4, var.equal = TRUE)
+```
+
+### Calculate daytime 2-state proportions by 2 periods (day and night)
+*Creates stateSummaryIND2period2state
+*Statistical test of seasonal differences in daytime active state
+```{r}
+# Calculate daytime 2-state proportions
+stateSummaryIND2period2state <- stateSummaryIND2period %>% 
+  group_by(season,ID,dayNight,state_classif) %>%
+  # filter(dayNight=="day") %>% 
+  mutate(state = ifelse(state_classif %in% c("1","2"),"rest","active")) %>%
+  ungroup %>% 
+  group_by(season, ID, dayNight,state,periodLength2) %>% 
+  # mutate(periodLength2 = n()) %>% 
+  # ungroup %>% 
+  # group_by(season, ID, dayNight, state_classif,periodLength2) %>% 
+  summarize(stateCount2state = sum(stateCount2)) %>% 
+  mutate(stateCountMin = stateCount2state/60,
+         stateCountHour = stateCount2state/60/60,
+         stateProp2 = stateCount2state/periodLength2) %>% 
+  ungroup
+
+#Statistical test of seasonal differences in daytime active state
+daytimeActiveSU <- stateSummaryIND2period2state %>% 
+  group_by(season,ID,dayNight,state) %>%
+  filter(season=="Summer",
+         dayNight=="day",
+         state=="active") 
+daytimeActiveWI <- stateSummaryIND2period2state %>% 
+  group_by(season,ID,dayNight,state) %>%
+  filter(season=="Winter",
+         dayNight=="day",
+         state=="active") 
+shapiro.test(daytimeActiveSU$stateCountHour)
+shapiro.test(daytimeActiveWI$stateCountHour)
+test <- stats::t.test(daytimeActiveSU$stateCountHour,daytimeActiveWI$stateCountHour)
+test
+
 ```
 
 ### Calculate seasonal state durations (bout length) by 2 periods (day+night)
 *Includes state bout length, combined states (active and rest), and combined periods (day and night)
+*Creates stateBout & stateBoutSummary
+
 ```{r}
 stateBout <- data_states %>% 
   group_by(season,ID) %>% 
@@ -253,7 +318,7 @@ stateBout <- data_states %>%
   ungroup
 stateBout$state_classif <- as.factor(stateBout$state_classif)
 stateBout$state <- ifelse(stateBout$state_classif==1|stateBout$state_classif==2,
-                             "Rest","Active")
+                             "rest","active")
 stateBout$hr <- hour(stateBout$dttz)
 stateBout$hr <- as.factor(stateBout$hr)
 
@@ -271,7 +336,7 @@ stateBoutSummary <- stateBout %>%
   ungroup
 ```
 
-### Plot State Proportions per individual by astronomical period
+### Plot 4-state proportions by astronomical period
 *This creates stacked plots by Dawn, Day, Dusk, and Night
 *No longer creating these plots because Dawn+Day+Dusk have been combined
 ```{r}
@@ -348,7 +413,7 @@ PallPeriods
 ggsave(PallPeriods, file="Seasonal State Proportions by Period.png",width=12, height=6, dpi=300)
 ```
 
-### Plot State Proportions by Combined Periods
+### Plot 4-state proportions by period (day and night)
 ```{r}
 # Plot combined day
 Pday2 <- stateSummaryIND2period %>% 
@@ -361,14 +426,15 @@ Pday2 <- stateSummaryIND2period %>%
   labs(x="State",
        y = "Proportion (%)",
        title = "Seasonal daytime state proportions") + 
-  theme_classic(base_size = 13) + 
+  scale_x_discrete(limits=c("Rest", "Rest with Noise", "Low Activity", "High Activity")) +
+  theme_classic(base_size = 13) +
   theme(plot.title = element_text(size=14)) +
   theme(axis.text = element_text(size = 14, color = "black"),
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 Pday2
 # Save a file at 300 ppi
-ggsave(Pday2, file="Seasonal Daytime State Proportions.png",width=12, height=6, dpi=300)
+ggsave(Pday2, file="Seasonal daytime 4-state proportions.png",width=12, height=6, dpi=300)
 # Plot night
 Pnight2 <- stateSummaryIND2period %>% 
   group_by(season,dayNight) %>% 
@@ -395,9 +461,10 @@ P2Periods
 ggsave(P2Periods, file="Seasonal State Proportions by Two Periods.png",width=12, height=6, dpi=300)
 ```
 
-### Plot Absolute durations per state by period (day + night)
+### Plot 4-state absolute durations by period (day and night)
+*Creates "Seasonal State Durations by Two Periods"
 ```{r}
-# Plot combined day
+# Plot day
 PdayDur <- stateSummaryIND2period %>%# View
   group_by(season,dayNight) %>% 
   filter(dayNight == "day") %>% 
@@ -408,7 +475,7 @@ PdayDur <- stateSummaryIND2period %>%# View
   scale_y_continuous(breaks = seq(0, 24, by = 2)) +
   labs(x="State",
        y = "Duration (hr)",
-       title = "Seasonal daytime state durations per individual (dawn to dusk)") + 
+       title = "Seasonal daytime state durations") + 
   scale_x_discrete(limits=c("Rest", "Rest with Noise", "Low Activity", "High Activity")) +
   theme_classic(base_size = 13) + 
   theme(plot.title = element_text(size=14)) +
@@ -416,7 +483,7 @@ PdayDur <- stateSummaryIND2period %>%# View
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 PdayDur
-ggsave(PdayDur, file="Seasonal daytime absolute 4-state durations.png",width=8, height=8, dpi=300)
+ggsave(PdayDur, file="Seasonal daytime absolute 4-state durations.png",width=12, height=8, dpi=300)
 
 # Plot night
 PnightDur <- stateSummaryIND2period %>% #View
@@ -445,9 +512,32 @@ PcycleDur
 ggsave(PcycleDur, file="Seasonal State Durations by Two Periods.png",width=8, height=8, dpi=300)
 ```
 
+### Plot seasonal 2-state (active and rest) daytime proportions
+*Seasonal state proportions per 24-hr cycle
+```{r}
+stateSummaryIND2period2state
+PstatePropd <- stateSummaryIND2period2state %>%
+  ggplot() +
+  geom_boxplot(aes(x = state, y = stateProp2, color = season)) +
+  labs(x="State",
+       y = "Proportion (%)",
+       title = "Seasonal daytime state proportions") + 
+  theme_classic(base_size = 13) + 
+  scale_color_discrete(name = "Season") +
+  ylim(0,1) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PstatePropd
+# Save a file at 300 ppi
+ggsave(PstatePropd, file="Seasonal daytime state proportions.png",width=8, height=8, dpi=300)
+```
 
-### Plot Absolute durations by combined state (active and rest) by period (day + night)
-*Need to adapt this script
+
+### Plot seasonal 2-state (active and rest) absolute durations by period (day and night)
+*Creates "Seasonal absolute 2-state durations by period"
+*Creates "Seasonal daytime absolute 2-state durations"
 ```{r}
 #Calculate total state durations per day
 stateDur2period <- stateBoutSummary %>%# View
@@ -460,26 +550,27 @@ PstateDurSU <- stateDur2period %>%
   geom_boxplot(aes(x = dayNight, y = boutTotal, color = state)) +
   labs(x="Period",
        y = "Duration (hr)",
-       title = "Austral summer absolute state durations per individual") + 
+       title = "Austral summer absolute state durations by period") + 
   theme_classic(base_size = 13) + 
   scale_color_discrete(name = "State") +
-  scale_y_continuous(breaks = seq(0, 24, by = 6)) +
+  scale_y_continuous(limits=c(0,24),breaks = seq(0, 24, by = 2)) +
   theme(plot.title = element_text(size=14)) +
   theme(axis.text = element_text(size = 14, color = "black"),
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 PstateDurSU
-# Plot summer states (active and rest) by combined period (day and night)
+
+# Plot winter states (active and rest) by combined period (day and night)
 PstateDurWI <- stateDur2period %>% 
   filter(season=="Winter") %>%
   ggplot() +
   geom_boxplot(aes(x = dayNight, y = boutTotal, color = state)) +
   labs(x="Period",
        y = "Duration (hr)",
-       title = "Austral winter absolute state durations per individual") + 
+       title = "Austral winter absolute state durations by period") + 
   theme_classic(base_size = 13) +
   scale_color_discrete(name = "State") +
-  scale_y_continuous(breaks = seq(0, 24, by = 6)) +
+  scale_y_continuous(limits=c(0,24),breaks = seq(0, 24, by = 2)) +
   theme(plot.title = element_text(size=14)) +
   theme(axis.text = element_text(size = 14, color = "black"),
         axis.title.x = element_text(color="black", size=14),
@@ -490,9 +581,9 @@ PstateDur24hr <- ggarrange(PstateDurSU,PstateDurWI,nrow=2)
 PstateDur24hr
 
 # Save a file at 300 ppi
-ggsave(PstateDur24hr, file = "Seasonal absolute state durations by period.png",width=8, height=8, dpi=300)
+ggsave(PstateDur24hr, file = "Seasonal absolute 2-state durations by period.png",width=8, height=8, dpi=300)
 
-PstateDur <- stateDur2period %>% 
+PstateDurd <- stateDur2period %>% 
   filter(dayNight=="day") %>% 
   ggplot() +
   geom_boxplot(aes(x = state, y = boutTotal, color = season)) +
@@ -501,26 +592,31 @@ PstateDur <- stateDur2period %>%
        title = "Seasonal daytime absolute state durations") + 
   theme_classic(base_size = 13) + 
   scale_color_discrete(name = "State") +
-  scale_y_continuous(breaks = seq(0, 24, by = 6)) +
+  scale_y_continuous(limits=c(0,24),breaks = seq(0, 24, by = 2)) +
   theme(plot.title = element_text(size=14)) +
   theme(axis.text = element_text(size = 14, color = "black"),
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
-PstateDur
+PstateDurd
 # Save a file at 300 ppi
-ggsave(PstateDur, file="Seasonal daytime absolute state durations.png",width=8, height=8, dpi=300)
+ggsave(PstateDurd, file="Seasonal daytime absolute 2-state durations.png",width=8, height=8, dpi=300)
 ```
-
-
 
 
 ### Plots to compare state proportion and absolute durations per period
 ```{r}
-# Stack plots to compare full cycle of state proportion and absolute duration
-PpropDur <-ggarrange(PdayDur,PnightDur,Pday2,Pnight2,nrow=2,ncol=2)
-PpropDur
+# Stack plots to compare seasonal 4-state proportion and absolute duration by day and night
+PpropDur4state <-ggarrange(PdayDur,PnightDur,Pday2,Pnight2,nrow=2,ncol=2)
+PpropDur4state
 # Save a file at 300 ppi
 ggsave(PpropDur, file="Compare State Proportion and Duration.png",width=12, height=6, dpi=300)
+
+# Stack plots to compare seasonal 2-state proportion and absolute duration by day and night
+# Still need to change the plots included in this
+PpropDur2state <-ggarrange(PstateDurd,PstatePropd,ncol=2)
+PpropDur2state
+# Save a file at 300 ppi
+ggsave(PpropDur2state, file="Seasonal daytime state duration and proportion.png",width=12, height=6, dpi=300)
 ```
 
 
@@ -555,7 +651,7 @@ write_csv(as.data.frame(seasdiffdurState4),file.path(getwd(),"state4duration.csv
 ```
 
 ## ODBA
-## Statistical test of differences in total odba per year to confirm pooling
+## Statistical test of differences in total odba per year to confirm year pooling
 ```{r}
 # Test for differences in summer years
 data_states$yr <- year(data_states$dttz)
