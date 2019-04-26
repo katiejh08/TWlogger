@@ -927,13 +927,24 @@ shapiro.test(sumODBAWI$sumODBA)
 ### Plot distribution of states by season
 *This shows data is left skewed
 ```{r}
-data_states %>% 
+dist <- data_states %>% 
+  ggplot()+
+  geom_histogram(aes(ODBA))
+dist
+
+dist_state <- data_states %>% 
   group_by(season,state_classif) %>%
   ggplot()+
   geom_histogram(aes(ODBA))+
   facet_grid(season~state_classif)
+dist_state
+ggsave(dist_state, file="ODBA distributions grouped by season and state.png",width=12, height=6, dpi=300)
+
 
 data_states$yr <- year(data_states$dttz)
+data_states$yr <- as.factor(data_states$yr)
+data_states$ID <- as.factor(data_states$ID)
+data_states$state_classif <- as.factor(data_states$state_classif)
 m1 <- glmer(ODBA~season*state_classif + (1|ID) + (1|yr),
             data=data_states,
             family=poisson)

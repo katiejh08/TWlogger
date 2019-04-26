@@ -216,7 +216,7 @@ save(redist_Astro,file="redist_Astro.RData")
 ```{r}
 # Load R workspace
 load("~/Projects/R/TWlogger/data_states.RData")
-FullAccStatesGPS <- left_join(data_states, redist_Astro, by = c("ID"="id","dttz"))
+FullAccStatesGPS <- left_join(data_states, redist_Astro, by = c("ID","dttz"))
 
 # Function for getting the mode of a vector
 mode <- function(x) {
@@ -656,5 +656,16 @@ bp5 <- ggplot() +
 bpall <- ggarrange(bp1,bp2,bp3,bp4,nrow=2,ncol=2)
 # This will save a file at 300 ppi
 ggsave(bpall, file="Seasonal Mean Distance and Step Lengths.png",width=12, height=6, dpi=300)
+```
+
+
+```{r}
+foo <- GPS_states %>%
+  group_by(state, season) %>% 
+  group_split() %>% 
+  map(~ ggplot(.x, aes(x, y, color = ID)) +
+        geom_point() +
+        labs(title = sprintf("%s: State %i", .x$season[[1]], .x$state[1])) +
+        theme_classic())
 ```
 
