@@ -34,6 +34,7 @@ library(marmap)
 library(mapdata)
 library(metR)
 library(RcppRoll)
+library(lme4)
 
 setwd("~/Projects/R/TWlogger")
 tzOffset <-"Etc/GMT+3"
@@ -512,6 +513,56 @@ PcycleDur
 ggsave(PcycleDur, file="Seasonal State Durations by Two Periods.png",width=8, height=8, dpi=300)
 ```
 
+### Plot histogram of state 3 and state 4
+```{r}
+data_states$state_classif <- as.factor(data_states$state_classif)
+# State 4
+PhistState4 <- data_states %>%
+  # group_by(ID,season,dayNight) %>% 
+  filter(season=="Winter",
+         dayNight == "day",
+         state_classif =="4") %>%
+  ggplot() +
+  geom_bar(aes(x =state_classif,color = ID),fill="white",position="dodge") +
+  # geom_vline()
+  labs(x="State 4",
+       y = "Frequency",
+       title = "Austral winter daytime frequency of state 4") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PhistState4
+
+
+# State 3
+PhistState3 <- data_states %>%
+  # group_by(ID,season,dayNight) %>% 
+  filter(season=="Winter",
+         dayNight == "day",
+         state_classif =="3") %>%
+  ggplot() +
+  geom_bar(aes(x =state_classif,color = ID),fill="white",position="dodge") +
+  # geom_vline()
+  labs(x="State 3",
+       y = "Frequency",
+       title = "Austral winter daytime frequency of state 3") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PhistState3
+
+# Stack plots to compare full cycle
+PhistState34 <- ggarrange(PhistState3,PhistState4,nrow=2)
+PhistState34
+
+# Save a file at 300 ppi
+ggsave(PhistState34, file="Winter daytime frequencies of state 3 and state 4.png",width=8, height=8, dpi=300)
+```
+
 ### Plot seasonal 2-state (active and rest) daytime proportions
 *Seasonal state proportions per 24-hr cycle
 ```{r}
@@ -703,12 +754,12 @@ meanlineWI <- data_states %>%
   summarize(meanODBA = mean(odbaGSum))
 
 # Seasonal total ODBA per solar hour
-PodbaSum24Su <- data_states %>%
+PodbaSum24Sublack <- data_states %>%
   filter(season == "Summer") %>% #View
   group_by(ID, timeBin) %>%
   summarize(odbaGSum = sum(ODBA/9.81,na.rm = TRUE)) %>% 
   ggplot() +
-  geom_line(aes(x=timeBin, y=odbaGSum, group=ID,color=ID)) +
+  geom_line(aes(x=timeBin, y=odbaGSum, group=ID),alpha=0.7) +
   geom_line(data=meanlineSU,aes(x=timeBin, y=meanODBA),color="black",size=1.5) +
   ylim(0,800) +
   labs(x="Solar Hour",
@@ -719,13 +770,13 @@ PodbaSum24Su <- data_states %>%
   theme(axis.text = element_text(size = 14, color = "black"),
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
-PodbaSum24Su
-PodbaSum24Wi <- data_states %>%
+PodbaSum24Sublack
+PodbaSum24Wiblack <- data_states %>%
   filter(season == "Winter") %>% #View
   group_by(ID, timeBin) %>%
   summarize(odbaGSum = sum(ODBA/9.81,na.rm = TRUE)) %>% 
   ggplot() +
-  geom_line(aes(x=timeBin, y=odbaGSum, group=ID,color=ID))+
+  geom_line(aes(x=timeBin, y=odbaGSum, group=ID),alpha=0.7)+
   geom_line(data=meanlineWI,aes(x=timeBin, y=meanODBA),color="black",size=1.5) +
   ylim(0,800) +
   labs(x="Solar Hour",
@@ -736,14 +787,14 @@ PodbaSum24Wi <- data_states %>%
   theme(axis.text = element_text(size = 14, color = "black"),
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
-PodbaSum24Wi
-Podba24Seas <- ggarrange(PodbaSum24Su,PodbaSum24Wi,nrow=2)
-Podba24Seas
+PodbaSum24Wiblack
+Podba24Seasblack <- ggarrange(PodbaSum24Sublack,PodbaSum24Wiblack,nrow=2)
+Podba24Seasblack
 # Save a file at 300 ppi
-ggsave(Podba24Seas, file="Seasonal total ODBA per solar hour.png",width=12, height=6, dpi=300)
+ggsave(Podba24Seasblack, file="Seasonal total ODBA per solar hour_black.png",width=12, height=6, dpi=300)
 
 # Mean odba per solar hour by season
-PodbaMeanSu <- data_states %>%
+PodbaMeanSublack <- data_states %>%
   filter(season == "Summer") %>% #View
   group_by(ID,timeBin) %>%
   summarize(odbaGMean = mean(ODBA/9.81,na.rm = TRUE)) %>% 
@@ -757,13 +808,13 @@ PodbaMeanSu <- data_states %>%
   theme(axis.text = element_text(size = 14, color = "black"),
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
-# PodbaMeanSu
-PodbaMeanWi <- data_states %>%
+# PodbaMeanSublack
+PodbaMeanWiblack <- data_states %>%
   filter(season == "Winter") %>% #View
   group_by(ID, timeBin) %>%
   summarize(odbaGMean = mean(ODBA/9.81,na.rm = TRUE)) %>% 
   ggplot() +
-  geom_line(aes(x=timeBin, y=odbaGMean, group=ID,color=ID)) +
+  geom_line(aes(x=timeBin, y=odbaGMean, group=ID),alpha=0.7) +
   labs(x="Solar Hour",
        y = "Mean ODBA (g)",
        title = "Austral winter mean ODBA per solar hour") + 
@@ -773,13 +824,15 @@ PodbaMeanWi <- data_states %>%
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 # PodbaMeanWi
-PodbaMeanSeas <- ggarrange(PodbaMeanSu,PodbaMeanWi,nrow=2)
-PodbaMeanSeas
+PodbaMeanSeasblack <- ggarrange(PodbaMeanSublack,PodbaMeanWiblack,nrow=2)
+PodbaMeanSeasblack
 # Save a file at 300 ppi
-ggsave(PodbaMeanSeas, file="Seasonal mean ODBA per solar hour.png",width=12, height=6, dpi=300)
+ggsave(PodbaMeanSeas, file="Seasonal mean ODBA per solar hour_black.png",width=12, height=6, dpi=300)
 ```
 
 ### Alternative plot to geom_line
+*This creates a boxplot of seasonal oDBA totals per solar hour
+*Not using this plot.
 ```{r}
 BPodbaSum24Su <- data_states %>%
   filter(season == "Summer") %>% #View
@@ -822,17 +875,18 @@ ggsave(BPodba24Seas, file="Boxplot Seasonal total ODBA per solar hour.png",width
 ```
 
 
-### Statistical test of differences in total odba per solar hour by season
+### Statistical test of seasonal differences in total odba per solar hour by season
 ```{r}
 # Combined years
 sumODBA <- data_states %>% 
-  group_by(ID,season) %>% 
+  group_by(ID,season) %>%
   summarize(sumODBA=sum(ODBA))
 
 sumODBASU <- sumODBA %>% 
   filter(season == "Summer")
 sumODBAWI <- sumODBA %>% 
   filter(season == "Winter") 
+length(sumODBASU$sumODBA)
 shapiro.test(sumODBASU$sumODBA)
 shapiro.test(sumODBAWI$sumODBA)
 test <- stats::t.test(sumODBASU$sumODBA,sumODBAWI$sumODBA)
@@ -851,8 +905,41 @@ summarySumODBA <- sumODBA %>%
   summarize(mean(sumODBA),
             sd(sumODBA))
   
+```
+
+### Statistical test of seasonal interannual differences in total odba per solar hour by season
+*This tests if tag versioning (2017 vs 2018/19) affected ODBA.
+```{r}
+sumODBASU <- sumODBA %>% 
+  group_by(ID,season,yr) %>%
+  filter(season == "Summer") 
+t.test(sumODBA ~ yr, data=sumODBASU)
+shapiro.test(sumODBASU$sumODBA)
+sumODBAWI <- sumODBA %>% 
+  group_by(ID,season,yr) %>%
+  filter(season == "Winter") 
+t.test(sumODBA ~ yr, data=sumODBASU)
+shapiro.test(sumODBAWI$sumODBA)
 
 ```
+
+
+### Plot distribution of states by season
+*This shows data is left skewed
+```{r}
+data_states %>% 
+  group_by(season,state_classif) %>%
+  ggplot()+
+  geom_histogram(aes(ODBA))+
+  facet_grid(season~state_classif)
+
+data_states$yr <- year(data_states$dttz)
+m1 <- glmer(ODBA~season*state_classif + (1|ID) + (1|yr),
+            data=data_states,
+            family=poisson)
+m1
+```
+
 
 ### Additional plots not yet made
 ```{r}
