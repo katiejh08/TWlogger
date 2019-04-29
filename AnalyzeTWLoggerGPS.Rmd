@@ -667,5 +667,41 @@ foo <- GPS_states %>%
         geom_point() +
         labs(title = sprintf("%s: State %i", .x$season[[1]], .x$state[1])) +
         theme_classic())
+
+#MAYBE adapt this from DayNightMOvementV2.Rmd
+library(adehabitatHR)
+library(maptools)
+library(viridis)
+library(leaflet)
+testdf <- GPS_states %>%
+  filter(season=="Summer")
+astro_SP <- longlat_to_UTM(testdf$long,testdf$lat)
+astro_SP_All <-bind_cols(astro_SP,testdf) # combine all data
+astro_SP_All <- SpatialPointsDataFrame(cbind(astro_SP$x, astro_SP$y), astro_SP_All, match.ID = FALSE)
+
+#KJH modify the following to match my day/night periods
+# astro_SP_Day <- astro_SP_All[astro_SP_All$period %% 4  == 1 ,]
+# astro_SP_Dusk <- astro_SP_All[astro_SP_All$period %% 4  == 2 ,]
+# astro_SP_Night <- astro_SP_All[astro_SP_All$period %% 4  == 3 ,]
+# astro_SP_Dawn <- astro_SP_All[astro_SP_All$period %% 4  == 0 ,]
+
+# make sure the 'period' column is being referenced below (should be 2nd to last column)
+# (ud <- kernelUD(astro_SP_All[,ncol(astro_SP_All)-1],h = "href", same4all = TRUE, grid = 1000))
+(ud <- kernelUD(astro_SP_All[,3],h = "href", same4all = TRUE, grid = 1000))
+
+# (ud_Day <- kernelUD(astro_SP_Day[,ncol(astro_SP_Day)-1],h = "href", same4all = TRUE, grid = 1000))
+# (ud_Night <- kernelUD(astro_SP_Night[,ncol(astro_SP_Night)-1],h = "href", same4all = TRUE, grid = 1000))
+# (ud_Dusk <- kernelUD(astro_SP_Dusk[,ncol(astro_SP_Dusk)-1],h = "href", same4all = TRUE, grid = 1000))
+# (ud_Dawn <- kernelUD(astro_SP_Dawn[,ncol(astro_SP_Dawn)-1],h = "href", same4all = TRUE, grid = 1000))
+## The UD by period
+image(ud)
+# image(ud_Day)
+# image(ud_Night)
+# image(ud_Dusk)
+# image(ud_Dawn)
+
+
+overlapUD <- kerneloverlaphr(ud, method = "BA",
+                             percent = 95, conditional = FALSE)
 ```
 

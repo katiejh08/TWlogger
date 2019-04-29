@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 *This file takes ... and does ...
 
 ## Load libraries; set working directory and local time zone offset
-```{r echo=FALSE,warning=FALSE}
+```{r echo=FALSE,warnings=FALSE}
 library(tidyverse)
 library(dplyr)
 library(maptools) # to calculate solarpos
@@ -153,6 +153,7 @@ save(data_states,file="data_states.RData")
 # Process Data
 
 ## States
+*These use state classifications identified by fitting a 4-state HMM.
 ### Calculate State Proportions per 24hr cycle
 *No longer running this script
 *Creates stateSummaryIND24
@@ -252,6 +253,7 @@ daytimeState3 <- stateSummaryIND2period %>%
 
 shapiro.test(daytimeState3$stateCountHour)
 t.test(stateCountHour ~ season, data = daytimeState3, var.equal = TRUE)
+
 wilcox.test(stateCountHour ~ season, data = daytimeState3, var.equal = TRUE)
 
 # Statistical test of seasonal differences in daytime state 4
@@ -260,6 +262,15 @@ daytimeState4 <- stateSummaryIND2period %>%
   filter(dayNight=="day",
          state_classif=="4") %>%
   ungroup
+daytimeState4meanSU <- mean(daytimeState4$stateCountHour[daytimeState4$season == "Summer"])
+daytimeState4meanSU
+daytimeState4SDSU <- sd(daytimeState4$stateCountHour[daytimeState4$season == "Summer"])
+daytimeState4SDSU
+
+daytimeState4meanWI <- mean(daytimeState4$stateCountHour[daytimeState4$season == "Winter"])
+daytimeState4SDWI <- sd(daytimeState4$stateCountHour[daytimeState4$season == "Winter"])
+daytimeState4meanWI
+daytimeState4SDWI
 
 shapiro.test(daytimeState4$stateCountHour) # p-value = 0.05814
 t.test(stateCountHour ~ season, data = daytimeState4, var.equal = TRUE)
@@ -517,6 +528,16 @@ ggsave(PcycleDur, file="Seasonal State Durations by Two Periods.png",width=8, he
 ```{r}
 data_states$state_classif <- as.factor(data_states$state_classif)
 # State 4
+dist_boutLength <- stateBoutSum %>% 
+  group_by(season,state_classif) %>%
+  ggplot()+
+  geom_histogram(aes(boutLength))+
+  facet_grid(season~state_classif)
+dist_boutLength
+ggsave(dist_boutLength, file="ODBA distributions grouped by season and state.png",width=12, height=6, dpi=300)
+
+
+
 PhistState4 <- data_states %>%
   # group_by(ID,season,dayNight) %>% 
   filter(season=="Winter",
@@ -878,15 +899,23 @@ ggsave(BPodba24Seas, file="Boxplot Seasonal total ODBA per solar hour.png",width
 ### Statistical test of seasonal differences in total odba per solar hour by season
 ```{r}
 # Combined years
+# Check for NAs
+sapply(data_states, function(x) sum(is.na(x)))
+
 sumODBA <- data_states %>% 
-  group_by(ID,season) %>%
-  summarize(sumODBA=sum(ODBA))
+  group_by(season,ID) %>%
+  summarize(sumODBA = sum(ODBA,na.rm = TRUE))
 
 sumODBASU <- sumODBA %>% 
   filter(season == "Summer")
 sumODBAWI <- sumODBA %>% 
   filter(season == "Winter") 
 length(sumODBASU$sumODBA)
+length(sumODBAWI$sumODBA)
+dSU <- density(sumODBASU$sumODBA-mean(sumODBASU$sumODBA))
+plot(dSU)
+dWI <- density(sumODBAWI$sumODBA-mean(sumODBAWI$sumODBA))
+plot(dWI)
 shapiro.test(sumODBASU$sumODBA)
 shapiro.test(sumODBAWI$sumODBA)
 test <- stats::t.test(sumODBASU$sumODBA,sumODBAWI$sumODBA)
@@ -904,7 +933,7 @@ summarySumODBA <- sumODBA %>%
   group_by(season) %>% 
   summarize(mean(sumODBA),
             sd(sumODBA))
-  
+
 ```
 
 ### Statistical test of seasonal interannual differences in total odba per solar hour by season
