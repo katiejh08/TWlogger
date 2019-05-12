@@ -2,7 +2,9 @@
 title: "Analyze Final HMM"
 author: "Katie Harrington"
 date: "April 19, 2019"
-output: html_document
+output:
+  word_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -19,7 +21,6 @@ library(maptools) # to calculate solarpos
 library(stringr)
 library(lubridate)
 library(adehabitatLT)
-#library(argosfilter)
 library(geosphere)
 library(ggpubr)
 library(sp)
@@ -80,7 +81,7 @@ rm(data)
 ```
 
 ## Import Raw Acc, combine with HMM states data, and calculate ODBA
-*This creates one file with states and raw acc. Saves as data_states.Rdata, so do not need to run this pre process more than once.
+*This creates one file with states and raw acc. Saves as data_states.Rdata
 ```{r}
 # load Final Metrics from AnalyzeFinalAccV1
 load("~/Projects/R/TWlogger/FinalMetrics.RData")
@@ -149,15 +150,14 @@ save(data_states,file="data_states.RData")
 ```
 
 # Process Data
-*Loads data_states.Rdata. Must begin here to continue analysis below.
+*Must begin here to continue analysis below.
+*Loads data_states.Rdata. 
+*This dataframe contains ODBA values and classifications identified by fitting a 4-state HMM.
 ```{r}
 load("~/Projects/R/TWlogger/data_states.RData")
 data_states
+data_states$yr <- year(data_states$dttz)
 ```
-
-## States
-*Requires data_states.Rdata.
-*These use state classifications identified by fitting a 4-state HMM.
 
 ### Calculate state proportions for each astronomical period (dawn, day, dusk, night). Will calculate by day and night below.
 *Calculates count of each state per period. Calculates state proportion by dividing by period length.
@@ -172,10 +172,11 @@ stateSummaryIND <- data_states %>%
   summarize(stateCount = n()) %>% 
   mutate(stateProp = stateCount/periodLength) %>% 
   ungroup
+
 # Change classes for plotting
 stateSummaryIND$ID <- as.factor(stateSummaryIND$ID)
 stateSummaryIND$astronomical <- as.factor(stateSummaryIND$astronomical)
-str(stateSummaryIND) # Check classes
+
 # Create vectors to retain groupings for plots
 stateSummaryIND$season_per_state <- paste(stateSummaryIND$season,
                                           stateSummaryIND$astronomical,
@@ -184,8 +185,16 @@ stateSummaryIND$season_period <- paste(stateSummaryIND$season,
                                           stateSummaryIND$astronomical,sep="_")
 ```
 
+### Calculate state proportions for day and night.
+*KJH: Add this from below.
+
+```{r}
+
+```
+
+
 ### Justify nighttime exclusion from analysis.
-*Statistical test for seasonal difference in nighttime state proportions.
+*KJH: This requires stateSummaryIND2period2state created below. Must create above.
 *Plots nighttime absolute state durations and proportions.
 *Results: (VISUAL) There is no seasonal difference in proportion of nighttime spent in either the active or resting state. 
 
@@ -207,7 +216,6 @@ PnightDur <- stateSummaryIND2period2state %>% #View
         axis.title.x = element_text(color="black", size=14),
         axis.title.y = element_text(color="black", size=14))
 
-
 # Plot nighttime state proportions
 PnightProp <- stateSummaryIND2period2state %>% 
   group_by(season,dayNight) %>% 
@@ -227,6 +235,7 @@ PnightProp <- stateSummaryIND2period2state %>%
 # Stack plots to compare full cycle
 PnightDurProp <- ggarrange(PnightDur,PnightProp,nrow=2)
 PnightDurProp
+rm(PnightDur,PnightProp,PnightDurProp)
 
 # Save a file at 300 ppi
 # ggsave(PnightDurProp, file="Seasonal nighttime state absolute durations and proportions.png",width=8, height=8, dpi=300)
@@ -234,59 +243,83 @@ PnightDurProp
 
 ##Q1: Is there a seasonal difference in daily ODBA?
 
-### Confirm pooling seasons among years.
-*Also confirms no affects from tag versioning.
-*Statistical test of differences in total ODBA per year.
-Results: There is no difference in total ODBA per season between years (summer p=0.82, winter 0.11).
-```{r}
-# Test for differences in summer years
-data_states$yr <- year(data_states$dttz)
-sumODBApool <- data_states %>% 
-  group_by(ID,yr,season) %>% 
-  summarize(sumODBA=sum(ODBA))
+### Calculate sum of ODBA per day per ID
+*Calculates total daily ODBA per individual
+*Creates sumODBA, sumODBASU, and sumODBAWI
+*KJH: Need to convert ODBA from ms-2 to g (divide by 9.81)
 
-sumODBApoolSU17 <- sumODBApool %>% 
-  filter(season == "Summer",
-         yr == "2017")
-sumODBApoolSU19 <- sumODBApool %>% 
-  filter(season == "Summer",
-         yr == "2019")
-shapiro.test(sumODBApoolSU17$sumODBA)
-shapiro.test(sumODBApoolSU19$sumODBA)
-test <- stats::t.test(sumODBApoolSU17$sumODBA,sumODBApoolSU19$sumODBA)
-test
-# Test for differences in winter years
-sumODBApoolWI17 <- sumODBApool %>% 
-  filter(season == "Winter",
-         yr == "2017")
-sumODBApoolWI18 <- sumODBApool %>% 
-  filter(season == "Winter",
-         yr == "2018")
-shapiro.test(sumODBApoolWI17$sumODBA)
-shapiro.test(sumODBApoolWI18$sumODBA)
-test <- stats::t.test(sumODBApoolWI17$sumODBA,sumODBApoolWI18$sumODBA)
-test
-```
-
-### Test if tag versioning (2017 vs 2018/19) affected ODBA.
-*Statistical test of seasonal 
-Results: There is no seasonal difference in total odba per solar hour 
 ```{r}
+# Check for NAs
+sapply(data_states, function(x) sum(is.na(x)))
+
+# Calculate sum of ODBA per day per ID
+sumODBA <- data_states %>% 
+  group_by(yr,season,ID) %>%
+  summarize(sumODBA = sum(ODBA,na.rm = TRUE))
+
+# Create dataframe of seasonal ODBA totals
 sumODBASU <- sumODBA %>% 
   group_by(ID,season,yr) %>%
   filter(season == "Summer") 
-t.test(sumODBA ~ yr, data=sumODBASU)
-shapiro.test(sumODBASU$sumODBA)
+
 sumODBAWI <- sumODBA %>% 
   group_by(ID,season,yr) %>%
   filter(season == "Winter") 
-t.test(sumODBA ~ yr, data=sumODBASU)
-shapiro.test(sumODBAWI$sumODBA)
 ```
 
-### Plot ODBA
+### Confirm pooling seasons across years.
+*Statistical test of differences in total ODBA per year.
+*Also confirms no effects from tag versioning (by default, if no interannual difference by season).
+Results: There is no difference in total ODBA per season between years (summer p=0.83, winter p=0.11).
+
+```{r}
+# Plot density distributions
+dSU <- density(sumODBASU$sumODBA-mean(sumODBASU$sumODBA))
+plot(dSU)
+dWI <- density(sumODBAWI$sumODBA-mean(sumODBAWI$sumODBA))
+plot(dWI)
+
+# Test for normality
+shapiro.test(sumODBASU$sumODBA)
+shapiro.test(sumODBAWI$sumODBA)
+
+# Test for equal variances
+var.test(sumODBA ~ yr,data=sumODBASU) #Variance is equal
+var.test(sumODBA ~ yr,data=sumODBAWI) #Variance is equal
+
+# Test for differences within each season by year to confirm pooling
+t.test(sumODBA ~ yr, data=sumODBASU,var.equal = TRUE)
+t.test(sumODBA ~ yr, data=sumODBAWI,var.equal = TRUE)
+
+rm(dSU,dWI)
+```
+
+### Statistical test of seasonal differences in total ODBA
+*KJH: These values are in ms-2. Need to convert in sumODBA calculation above.
+*Results: Daily ODBA values are higher during winter than in summer (winter = 27939.53, summer = 23356.13, p-value = 0.03567).
+
+```{r}
+# Test for normality
+shapiro.test(sumODBASU$sumODBA)
+shapiro.test(sumODBAWI$sumODBA)
+
+# Test for equal variances
+var.test(sumODBA ~ season,data=sumODBA) #Variance is equal
+
+# Test for seasonal differences
+test <- t.test(sumODBA ~ season,data=sumODBA,var.equal = TRUE)
+test
+```
+
+
+### Plot ODBA (Figure 1)
 *Seasonal total ODBA per solar hour with trendline
 *Seasonal mean ODBA per solar hour with trendline
+*KJH: Add caption (results)
+*KJH: Needs to add shading for day night 
+*KJH: Change x-axis ticks 0-24 by 4
+*KJH: Add a caption to the figure?
+
 ```{r}
 # Meanline summer
 meanlineSU <- data_states %>%
@@ -314,6 +347,8 @@ PodbaSum24SU <- data_states %>%
   geom_line(aes(x=timeBin, y=odbaGSum, group=ID),alpha=0.7) +
   geom_line(data=meanlineSU,aes(x=timeBin, y=meanODBA),color="black",size=1.5) +
   ylim(0,800) +
+  # xlim(0,24) +
+  # scale_x_discrete(breaks = seq(0, 24, by = 2)) +
   labs(x="Solar Hour",
        y = "Total ODBA (g)",
        title = "Austral summer total ODBA per solar hour") + 
@@ -345,64 +380,20 @@ PodbaSum24WI
 
 Podba24Seas <- ggarrange(PodbaSum24SU,PodbaSum24WI,nrow=2)
 Podba24Seas 
+rm(meanlineSU,meanlineWI,PodbaSum24SU,PodbaSum24WI)
 # Save a file at 300 ppi
-ggsave(Podba24Seasblack, file="Seasonal total ODBA per solar hour_black.png",width=12, height=6, dpi=300)
-```
-  
-### Statistical test of seasonal differences in total ODBA
-*Calculates total daily ODBA per individual
-*Creates sumODBA
-*Statistical test of differences in seasonal total ODBA per solar hour
-```{r}
-# Check for NAs
-sapply(data_states, function(x) sum(is.na(x)))
-
-# Calculate sum of ODBA per day per ID
-sumODBA <- data_states %>% 
-  group_by(season,ID) %>%
-  summarize(sumODBA = sum(ODBA,na.rm = TRUE))
-
-# Create dataframe of seasonal ODBA totals (to use with density plots)
-sumODBASU <- sumODBA %>% 
-  filter(season == "Summer")
-sumODBAWI <- sumODBA %>% 
-  filter(season == "Winter") 
-
-# Plot density distributions
-dSU <- density(sumODBASU$sumODBA-mean(sumODBASU$sumODBA))
-plot(dSU)
-dWI <- density(sumODBAWI$sumODBA-mean(sumODBAWI$sumODBA))
-plot(dWI)
-
-# Test for normality
-shapiro.test(sumODBASU$sumODBA)
-shapiro.test(sumODBAWI$sumODBA)
-
-# STATISTICAL TEST
-test <- t.test(sumODBA$sumODBA)
-test
+# ggsave(Podba24Seas, file="Seasonal total ODBA per solar hour_black.png",width=12, height=6, dpi=300)
 ```
 
-### ODBA general linear mixed model
-*Runs a glmer with response as 1-Hz ODBA, interaction terms of season and state, and random effects of individual and year.
-*KJH: This needs work. Need to continually resample until coefficients converge.
-```{r}
-# General linear mixed model (glmer) with response as 1-Hz ODBA, interaction terms of season and state, and random effects of individual and year
-m1 <- glmer(ODBA~season*state_classif + (1|ID) + (1|yr),
-            data=data_states,
-            family=poisson)
-m1
-```
 
 ## Q2a: Is there a seasonal difference in daytime absolute duration of the active state?
+
+### Calculate durations and proportions
 *Calculate 4-state duration and proportion for 2 periods (day and night)
 *Calculate daytime 2-state (active and rest) duration and proportion for 2 periods (day and night)
 *Creates stateSummaryIND2period
 *Creates stateSummaryIND2period2state
 *Creates dayActive & dayRest
-*Statistical test of seasonal differences in daytime active state
- 
-*Results: I found no seasonal difference in daytime duration of the active state (winter = 5.48 ± 2.18 hr, summer = 5.19 ± 2.38 hr (mean ± SD). The additional summer day length is spent resting (winter = 5.34 ± 2.20 hr, summer = 11.56 ± 2.06 hr (mean ± SD), Two Sample t-test p = 3.61e-07).
 
 ```{r}
 # Calculate 4-state proportions for by 2 periods
@@ -442,37 +433,68 @@ stateSummaryIND2period2state <- stateSummaryIND2period %>%
          stateProp2 = stateCount2state/periodLength2) %>% 
   ungroup
 
-# STATISTICAL TEST
-# Seasonal differences in daytime active state
+# Create dataframe of only daytime active state
 dayActive <- stateSummaryIND2period2state %>% 
   group_by(season,ID,dayNight,state) %>%
   filter(dayNight=="day",
          state=="active") 
 
-shapiro.test(dayActive$stateCountHour[dayActive$season=="Summer"]) #Results: p-value = 0.08254
-shapiro.test(dayActive$stateCountHour[dayActive$season=="Winter"]) #Results: p-value = 0.1597
-t.test(stateCountHour ~ season, data = dayActive, var.equal = TRUE) #Results: p-value = 0.7531
-sd(dayActive$stateCountHour[dayActive$season == "Summer"])
-sd(dayActive$stateCountHour[dayActive$season == "Winter"])
-
-# Seasonal differences in daytime rest state
+# Create dataframe of only daytime resting state
 dayRest <- stateSummaryIND2period2state %>% 
   group_by(season,ID,dayNight,state) %>%
   filter(dayNight=="day",
          state=="rest") 
+```
 
+### Statistical test of seasonal differences in daytime states
+*Uses dataframes dayActive and dayRest created above
+*Results: I found no seasonal difference in daytime absolute duration of the active state (winter = 5.48 ± 2.18 hr, summer = 5.19 ± 2.38 hr (mean ± SD). The additional summer day length is spent resting (winter = 5.34 ± 2.20 hr, summer = 11.56 ± 2.06 hr (mean ± SD), Two Sample t-test p = 3.61e-07).
+
+```{r}
+## Test for differences in daytime absolute duration of active state by season
+
+# Test for normality
+shapiro.test(dayActive$stateCountHour[dayActive$season=="Summer"]) #Results: p-value = 0.08254
+shapiro.test(dayActive$stateCountHour[dayActive$season=="Winter"]) #Results: p-value = 0.1597
+
+# Test for equal variance
+var.test(stateCountHour ~ season, data = dayActive)
+
+# Test for seasonal differences in daytime active state
+t.test(stateCountHour ~ season, data = dayActive, var.equal = TRUE) #Results: p-value = 
+
+# Calculate summer mean and standard deviation of daytime absolute duration of active state
+dayActiveSUm <- mean(dayActive$stateCountHour[dayActive$season == "Summer"])
+dayActiveSUsd <- sd(dayActive$stateCountHour[dayActive$season == "Summer"])
+
+# Calculate winter mean and standard deviation of daytime absolute duration of active state
+dayActiveWIm <- mean(dayActive$stateCountHour[dayActive$season == "Winter"])
+dayActiveWIsd <- sd(dayActive$stateCountHour[dayActive$season == "Winter"])
+
+## Test for differences in resting state by season
+
+# Test for normality
 shapiro.test(dayRest$stateCountHour[dayRest$season=="Summer"]) #Results: p-value = 0.2386
 shapiro.test(dayRest$stateCountHour[dayRest$season=="Winter"]) #Results: p-value =  0.1386
-t.test(stateCountHour ~ season, data = dayRest, var.equal = TRUE) #Results: p-value = 3.61e-07
-sd(dayRest$stateCountHour[dayRest$season == "Summer"])
-sd(dayRest$stateCountHour[dayRest$season == "Winter"])
 
-dayActive
-dayRest
+# Test for equal variance
+var.test(stateCountHour ~ season, data = dayActive)
+
+# Test for seasonal differences in daytime resting state
+t.test(stateCountHour ~ season, data = dayRest, var.equal = TRUE) #Results: p-value = 3.61e-07
+
+# Calculate summer mean and standard deviation of daytime absolute duration of resting state
+dayRestSUm <- mean(dayRest$stateCountHour[dayRest$season == "Summer"])
+dayRestSUsd <- sd(dayRest$stateCountHour[dayRest$season == "Summer"])
+
+# Calculate winter mean and standard deviation of daytime absolute duration of resting state
+dayRestWIm <- mean(dayRest$stateCountHour[dayRest$season == "Winter"])
+dayRestWIsd <- sd(dayRest$stateCountHour[dayRest$season == "Winter"])
 ```
 
 ### Plot of seasonal daytime absolute duration of active state
-*Creates "Seasonal daytime absolute state durations of active and rest"
+*Creates plot called "Seasonal daytime absolute state durations of active and rest"
+*KJH: Can I use dayActive and dayRest instead of stateSummaryIND2period2state?
 ```{r}
 # Plot daytime absolute state durations
 PdayDur <- stateSummaryIND2period2state %>%
@@ -496,12 +518,11 @@ PdayDur
 ```
 
 ### Plot of seasonal daytime absolute duration of active state by solar hour
-*This plots rest and active by solar hour
-*H0: There is no difference in variance in activity durations between seasons.
-*H1: More variance in summer activity durations when many resources are available across space and time. There will be less variance in activity durations during winter. Animals are more tied to spatial and temporal resources in the winter.
+*This plots rest and active by solar hour. During summer, many resources are available across time. Whereas during winter, resources are spatiotemporally fixed.
+*KJH: Change this from boxplot to mean point with error bars.
 
 ```{r}
-# Plot summer daytime activity absolute duration by solar hour
+# Plot summer absolute state duration by solar hour
 PcountSUdhr <- stateBout %>% 
   group_by(season,ID,dayNight,timeBin,state) %>%
   summarize(stateCount=n()/60) %>%
@@ -512,7 +533,8 @@ PcountSUdhr <- stateBout %>%
                    color = state)) +
   labs(x="Solar Hour of Day",
        y = "Duration (min)",
-       title = "Summer daytime activity absolute duration by hour (n=12)") + 
+       title = "Summer absolute state duration by solar hour (n=12)") + 
+  scale_x_discrete(limits=0:24) +
   theme_classic(base_size = 13) + 
   theme(plot.title = element_text(size=14)) +
   theme(axis.text = element_text(size = 14, color = "black"),
@@ -520,7 +542,7 @@ PcountSUdhr <- stateBout %>%
         axis.title.y = element_text(color="black", size=14))
 # PcountSUdhr
 
-# Plot winter daytime activity absolute duration by hour
+# Plot winter absolute state duration by solar hour
 PcountWIdhr <- stateBout %>% 
   group_by(season,ID,dayNight,timeBin,state) %>%
   summarize(stateCount=n()/60) %>%
@@ -531,7 +553,8 @@ PcountWIdhr <- stateBout %>%
                    color = state)) +
   labs(x="Solar Hour of Day",
        y = "Duration (min)",
-       title = "Winter daytime activity absolute duration by hour (n=12)") + 
+       title = "Winter absolute state duration by solar hour (n=12)") + 
+  scale_x_discrete(limits=0:24) +
   theme_classic(base_size = 13) + 
   theme(plot.title = element_text(size=14)) +
   theme(axis.text = element_text(size = 14, color = "black"),
@@ -541,6 +564,9 @@ PcountWIdhr <- stateBout %>%
 
 PcountSeasdhr <- ggarrange(PcountSUdhr,PcountWIdhr,nrow=2)
 PcountSeasdhr
+
+# Save a file at 300 ppi
+ggsave(PcountSeasdhr, file="Seasonal absolute state durations by solar hour.png",width=12, height=8, dpi=300)
 ```
 
 ## Q2b: Is there a seasonal difference in daytime absolute duration of state 3? What about a seasonal difference in daytime absolute duration of state 4?
@@ -613,7 +639,6 @@ ggsave(PdayDur34, file="Seasonal daytime absolute state durations for states 3 a
 
 ```
 
-
 ## Q2c: Is there a seasonal difference in mean daytime bout lengths? Nighttime bout lengths? Are winter nights more fitful?
 *Calculates state bout length (seconds), combined states (active and rest), and combined periods (day and night)
 *Calculates timeBin vector based off solar hour of day
@@ -622,7 +647,6 @@ ggsave(PdayDur34, file="Seasonal daytime absolute state durations for states 3 a
 *Statistical test of seasonal differences in mean bout lengths of state 3 and state 4
 *Need to use test for samples of unequal lengths (summer days are longer)
 *Results: Mean bout lengths have a exponential/Poisson/Gamma distribution? Cannot use Shapiro test for normality because n>10000.
-
 
 ```{r}
 stateBout <- data_states %>% 
@@ -901,8 +925,9 @@ colnames(seasdiffdurState4) <- c("stateCountHourWI", "stateCountHourSU")
 write_csv(as.data.frame(seasdiffdurState4),file.path(getwd(),"state4duration.csv"))
 ```
 
-### Plot distribution of states by season
-*This shows data is left skewed
+### Plots raw data distribution of states by season
+*Irrelevant because variable of interest is ODBA daily sum not raw values. 
+*This shows raw ODBA (1-Hz) is left skewed.
 ```{r}
 # Plot distribution of ODBA values
 dist <- data_states %>% 
@@ -986,8 +1011,8 @@ PodbaMeanSeas
 ggsave(PodbaMeanSeas, file="Seasonal mean ODBA per solar hour_black.png",width=12, height=6, dpi=300)
 ```
 
-
 ### Plot seasonal nighttime activity absolute duration by solar hour
+*Excluded nighttime period from analysis. 
 ```{r}
 # Plot summer nighttime activity absolute duration by hour
 PcountSUnhr <- stateBout %>% 
