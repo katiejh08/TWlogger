@@ -21,7 +21,6 @@ library(maptools) # to calculate solarpos
 library(stringr)
 library(lubridate)
 library(adehabitatLT)
-#library(argosfilter)
 library(geosphere)
 library(ggpubr)
 library(sp)
@@ -34,7 +33,6 @@ library("ggspatial")
 library(marmap)
 library(mapdata)
 library(metR)
-source('UTMConversionfxns.R')
 library(ggplot2)
 library(ggmap)
 library(maps)
@@ -49,6 +47,7 @@ library(maps)
 library(mapdata)
 library(devtools)
 library(RColorBrewer)
+source('UTMConversionfxns.R')
 # if(!requireNamespace("devtools")) 
 # install.packages("devtools")
 # devtools::install_github("dkahle/ggmap")
@@ -119,7 +118,7 @@ for(i in 1:length(filenames)) {
   data$yday <- paste('D',data$yday,sep='')
   data$indday <- as.factor(paste(data$name, data$yday, sep ='_', collapse = NULL))
 
-  # Calculate distance between consecutive points
+  # Calculate distance between consecutive points (km)
   source('Point2Point-stats.R')
   # Determine Solar Position for each point
   source('SunriseSunsetTimes.R')
@@ -191,10 +190,6 @@ redist_Astro$dt <- redist_Astro$date
 redist_Astro$dttz <- redist_Astro$dt
 attr(redist_Astro$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
 redist_Astro$yday <- yday(redist_Astro$dttz)
-redist_Astro <- redist_Astro %>% 
-  group_by(season,id) %>% 
-  mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"day","night")) %>%
-  ungroup
 redist_Astro$ID <- redist_Astro$id
 redist_Astro$id <- NULL
 # Determine Season (calculated from 2017 solstices and equinoxes)
@@ -204,6 +199,10 @@ redist_Astro[which(redist_Astro$yday > 171 & redist_Astro$yday <= 265),]$season 
 redist_Astro[which(redist_Astro$yday > 265 & redist_Astro$yday < 355),]$season <- 'Spring'
 redist_Astro[which(redist_Astro$yday >= 355 | redist_Astro$yday <= 79),]$season <- 'Summer'
 unique(redist_Astro$season)
+redist_Astro <- redist_Astro %>% 
+  group_by(season,ID) %>% 
+  mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"day","night")) %>%
+  ungroup
 distanceSummary <- redist_Astro %>% 
   group_by(season, ID,dayNight) %>% 
   summarize(periodDist = sum(dist,na.rm = TRUE),
@@ -212,7 +211,9 @@ distanceSummary <- redist_Astro %>%
 save(redist_Astro,file="redist_Astro.RData")
 ```
 
+
 ## Add states to GPS
+This creates and saves GPS_states.
 ```{r}
 # Load R workspace
 load("~/Projects/R/TWlogger/data_states.RData")
@@ -280,7 +281,50 @@ GPS_states <- GPS_states %>%
   group_by(season,ID) %>% 
   mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"Day","Night")) %>%
   ungroup
+
+save(GPS_states,file="GPS_states.RData")
 ```
+
+## Recalculate distance between points
+
+
+```{r}
+data <- GPS_states
+data$name <- GPS_states$ID
+source('pt2pt_fxns.R')   
+#Calculate distance, speed, and directions between successive points
+
+#Order the dataframe in order to ensure the correct application of our coming functions
+data$name <- as.character(data$name)
+data <- data[order(data$name,data$dttz),]
+library(fossil)
+
+calcdist <- function(x) pt2pt.distance(longitude=x$long,latitude=x$lat)
+calcdur <- function(x) pt2pt.duration(datetime=x$dttz)
+calcdir <- function(x) pt2pt.direction(longitude=x$long,latitude=x$lat)
+
+## Specify functions to calculate FORWARD and BACKWARD dist, dur and spd over lists of id's. 
+## NOTE: this will allow you to calculate trajectorie speeds and directions for a large number of birds at once
+v1 <- lapply(split(data,data$name),"calcdist")
+v2 <- lapply(split(data,data$name),"calcdur")
+v3 <- lapply(split(data,data$name),"calcdir")
+
+## create dist vector in meters
+data$dist <- as.numeric(unlist(v1))
+## this converts the distance from KM to MI
+# data$dist <- data$dist * 0.621371
+##converts duration from S to Hrs 
+data$dur <- as.numeric(unlist(v2))/3600
+##Speed is in Miles/Hr
+data$spd <- data$dist/data$dur
+data$dir <- as.numeric(unlist(v3))
+GPS_states <- data
+
+save(GPS_states,file="GPS_states.RData")
+
+```
+
+
 
 ## Data filters for plotting GPS positions with state classifications
 ```{r echo=FALSE, warnings=FALSE}

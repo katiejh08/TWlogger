@@ -168,7 +168,7 @@ data_states$duskT <- hour(data_states$dusk) + second(data_states$dusk)/60
 # Check for NAs
 sapply(data_states, function(x) sum(is.na(x)))
 
-save(data_states,file="data_states.RData")
+# save(data_states,file="data_states.RData")
 ```
 
 # Analyze Data
@@ -365,7 +365,7 @@ t.test(sumODBA ~ yr, data=sumODBAWI,var.equal = TRUE)
 rm(dSU,dWI)
 ```
 
-### Statistical test of seasonal differences in total daily ODBA (g)
+### Test for seasonal differences in total daily ODBA (g)
 Daily ODBA values are higher during winter than in summer (winter 2848.07 ± 577.26 g (mean ± SD), summer 2380.85 ± 435.65 g, p-value = 0.03567).
 
 ```{r warning=FALSE}
@@ -467,13 +467,13 @@ Podba24Seas <- annotate_figure(Podba24Seas,
 Podba24Seas
 rm(meanlineSU,meanlineWI,PodbaSum24SU,PodbaSum24WI)
 # Save a file at 300 ppi
-ggsave(Podba24Seas, file="Seasonal total ODBA per solar hour_shaded.png",dpi=300)
+# ggsave(Podba24Seas, file="Seasonal total ODBA per solar hour_shaded.png",dpi=300)
 ```
 
 
 ## Q2a: Is there a seasonal difference in daytime absolute duration of the active state?
 
-### Statistical test of seasonal differences in daytime total activity
+### Test for seasonal differences in daytime total activity
 Pooling the active and resting states masked the seasonal differences in activity. There is no seasonal difference in total time spent in the active state (winter = 5.48 ± 2.18 hr, summer = 5.19 ± 2.38 hr [mean ± SD]; Two Sample t-test, p=0.75).
 
 ```{r warning=FALSE}
@@ -518,9 +518,9 @@ dayRestWIm <- mean(dayRest$stateCountHour[dayRest$season == "Winter"])
 dayRestWIsd <- sd(dayRest$stateCountHour[dayRest$season == "Winter"])
 ```
 
-## Q2a: Is there a seasonal difference in daytime absolute duration by degree of active state (i.e. low and high activity)?
+## Q2b: Is there a seasonal difference in daytime absolute duration by degree of active state (i.e. low and high activity)?
 
-### Statistical test of seasonal differences in daytime level of activity
+### Test for seasonal differences in daytime level of activity
 When the active state is analyzed by degree (i.e. low activity and high activity), these data suggest caracaras spend more time in high activity during winter than in summer (summer 44.1 ± 26.1 min, winter 99.0 ± 45.2 min [mean ± SD]; Two Sample t-test p<0.01). There is no seasonal difference in daily time spent in low activity (summer 267 ± 2.0 min, winter 230 ± 1.6 min (mean ± SD); Two Sample t-test p=0.42). n=12 per season.
 
 
@@ -599,10 +599,52 @@ PdayDur34 <- stateSummaryIND2period %>%
         axis.title.y = element_text(color="black", size=14))
 PdayDur34
 # Save a file at 300 ppi
-ggsave(PdayDur34, file="Seasonal daytime absolute state durations for states 3 and 4.png",width=12, height=8, dpi=300)
+# ggsave(PdayDur34, file="Seasonal daytime absolute state durations for states 3 and 4.png",width=12, height=8, dpi=300)
 
 ```
 
+# Q3: How does daily distance traveled differ seasonally?
+Calculate daily distance traveled by season. Step length might capture error because of 2-min duty cycle. Can subsample again so we're not affected by accuracy of location. Once I've calculated daily travel distance, I can compare to results of seasonal activity levels. 
+
+
+
+```{r}
+# See Analyze TWLoggerGPS script
+load("~/Projects/R/TWlogger/GPS_states.RData")
+
+
+
+# Calculate total daytime distance traveled
+
+distSum <- GPS_states %>% 
+  group_by(season,ID) %>%
+  summarize(distSum = sum(dist,na.rm = TRUE))
+
+# Test for seasonal difference in total distance traveled
+shapiro.test(distSum$distSum[distSum$season=="Summer"])
+shapiro.test(distSum$distSum[distSum$season=="Winter"])
+var.test(distSum ~ season, data = distSum)
+t.test(distSum ~ season, data = distSum, var.equal = TRUE)
+
+# Calculate total distance traveled SD
+sd(distSum$distSum[distSum$season=="Summer"])
+sd(distSum$distSum[distSum$season=="Winter"])
+
+
+# Validate state classifications using distance traveled by state bout? Or mean distance traveled per 1 Hz by state?
+# Calculate mean dist traveled by state
+# Calculate mean daytime distance traveled by state
+# Test for seasonal difference in daytime distance traveled by state
+
+  
+```
+
+
+# Discussion
+
+```{r}
+
+```
 
 
 # Boneyard
@@ -660,7 +702,7 @@ PcountSeasdhr <- ggarrange(PcountSUdhr,PcountWIdhr,nrow=2)
 PcountSeasdhr
 
 # Save a file at 300 ppi
-ggsave(PcountSeasdhr, file="Seasonal absolute state durations by solar hour.png",width=12, height=8, dpi=300)
+# ggsave(PcountSeasdhr, file="Seasonal absolute state durations by solar hour.png",width=12, height=8, dpi=300)
 ```
 
 
@@ -912,7 +954,7 @@ ggsave(PhistState34, file="Winter daytime frequencies of state 3 and state 4.png
 rm(PhistState3,PhistState4)
 ```
 
-### Statistical test to compare state proportions and absolute durations per period
+### Test to compare state proportions and absolute durations per period
 
 ```{r warning=FALSE}
 # Test for difference in state duration between summer and winter day
@@ -940,7 +982,7 @@ test
 
 seasdiffdurState4 <- cbind(seasdiffdur1$stateCountHourWI,seasdiffdur2$stateCountHourSU)
 colnames(seasdiffdurState4) <- c("stateCountHourWI", "stateCountHourSU")
-write_csv(as.data.frame(seasdiffdurState4),file.path(getwd(),"state4duration.csv"))
+# write_csv(as.data.frame(seasdiffdurState4),file.path(getwd(),"state4duration.csv"))
 ```
 
 ### Plots raw data distribution of states by season
@@ -1028,7 +1070,7 @@ PodbaMeanSeas <- ggarrange(PodbaMeanSU,PodbaMeanWI,nrow=2)
 PodbaMeanSeas
 
 # Save a file at 300 ppi
-ggsave(PodbaMeanSeas, file="Seasonal mean ODBA per solar hour_black.png",width=12, height=6, dpi=300)
+# ggsave(PodbaMeanSeas, file="Seasonal mean ODBA per solar hour_black.png",width=12, height=6, dpi=300)
 ```
 
 ### Plot of seasonal daytime absolute duration of active state
