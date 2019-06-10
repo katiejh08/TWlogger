@@ -60,8 +60,7 @@ source('UTMConversionfxns.R')
 # if(!requireNamespace("devtools")) 
 # install.packages("devtools")
 # devtools::install_github("dkahle/ggmap")
-register_google(key = "AIzaSyAHRpFoa86K8IXnsIo1H3fLjWyhorawZew")
-has_google_key()
+
 
 # Set the Working Directory
 current_path = rstudioapi::getActiveDocumentContext()$path 
