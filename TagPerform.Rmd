@@ -1,0 +1,76 @@
+---
+title: "TagPerformance"
+author: "Katie Harrington"
+date: "June 9, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Tag Performance
+This calculates battery life
+
+```{r}
+
+# Select file to import
+filename <- file.choose()
+# Import original 50-Hz data
+data <- read_csv(filename)
+
+# create proper datetime objects (convert GMT to local)
+accdata <- data
+accdata$dtstart <- as.POSIXct(paste(accdata$start.date, accdata$start.time), format="%m/%d/%Y %H:%M:%S", tz='GMT')
+accdata$dtend <- as.POSIXct(paste(accdata$end.date, accdata$end.time), format="%m/%d/%Y %H:%M:%S", tz='GMT')
+
+
+tagDur <- accdata %>%
+  mutate(dur=difftime(dtend,dtstart,units="hours"),
+         yr=year(dtstart))
+tagDur$dur <- as.numeric(tagDur$dur)
+
+# Tag durations 2019
+tagDurSumSU <- tagDur %>%
+  group_by(yr) %>%
+  filter(yr=="2019") %>%
+  summarize(mDur=mean(dur),
+         sdDur=sd(dur))
+
+# Tag duration 2018
+tagDurSumWI <- tagDur %>%
+  group_by(yr) %>%
+  filter(yr=="2018") %>%
+  summarize(mDur=mean(dur),
+         sdDur=sd(dur))
+
+# Tag duration all (tags with acc and GPS)
+tagDurSumAll <- tagDur %>%
+  group_by(yr) %>%
+  summarize(mDur=mean(dur),
+         sdDur=sd(dur))
+
+ggdensity(tagDur$dur)
+shapiro.test(tagDur$dur)
+var.test(dur~yr,data=tagDur)
+t.test(dur~yr,data=tagDur)
+
+```
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
