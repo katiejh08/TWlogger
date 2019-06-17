@@ -9,18 +9,17 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Get Started
-*This file takes ... and does ...
-
 ## Load libraries; set working directory and local time zone offset
-*NOTE: Saunders is in UTM20S 
-```{r echo=FALSE, warning=FALSE}
+NOTE: Saunders is in UTM20S 
+
+```{r Libraries,echo=FALSE,results="hide",warning=FALSE,collapse=TRUE}
 library(tidyverse)
 library(dplyr)
 library(maptools) # to calculate solarpos
 library(stringr)
 library(lubridate)
 library(adehabitatLT)
+library(adehabitatHR)
 library(geosphere)
 library(ggpubr)
 library(sp)
@@ -48,19 +47,14 @@ library(mapdata)
 library(devtools)
 library(RColorBrewer)
 
+# Example of how to install and load multiple packages at once
 # install.packages(c("adehabitatHR","rgdal","sp", "ggmap", "mapproj", "maptools", "rgeos","raster","leaflet","move","ctmm","BBMM","PBSmapping"))
-
-# Next, we're going to load our packages
-packagelist <- c("adehabitatHR","rgdal","sp", "ggmap", "mapproj","rgeos","maptools","raster","leaflet",
-                 "move","ctmm","BBMM", "PBSmapping")  
-lapply(packagelist, require, character.only = TRUE)
-
+# packagelist <- c("adehabitatHR","rgdal","sp", "ggmap", "mapproj","rgeos","maptools","raster","leaflet","move","ctmm","BBMM", "PBSmapping")
+# lapply(packagelist, require, character.only = TRUE)
 
 source('UTMConversionfxns.R')
-# if(!requireNamespace("devtools")) 
-# install.packages("devtools")
-# devtools::install_github("dkahle/ggmap")
-
+register_google(key = read.csv("APIkey.csv",header=FALSE)[1,])
+has_google_key()
 
 # Set the Working Directory
 current_path = rstudioapi::getActiveDocumentContext()$path 
@@ -72,7 +66,9 @@ tzOffset <-"Etc/GMT+3"
 ```
 
 ## Combine Data and calculate summary stats
+
 ```{r warnings=FALSE}
+
 # Select file to import
 filename <- file.choose()
 # Import IGU GPS data (ScriptOutputs from KML builder scripts)
@@ -149,7 +145,8 @@ rm(v1, v2, v3,xy, i, name,data)
 ```
 
 ## Rediscretize data
-*Saves rediscretized data (2min) as redist_Astro.RData
+Saves rediscretized data (2min) as redist_Astro.RData
+
 ```{r}
 # add unique identifier to group by name and period in plots
 dataset$namePeriod <- paste(dataset$name, dataset$period, sep = "-")
@@ -217,11 +214,12 @@ distanceSummary <- redist_Astro %>%
             periodmeanDist = mean(dist,na.rm = TRUE),
             periodSDdist = sd(dist,na.rm = TRUE))
 # save(redist_Astro,file="redist_Astro.RData")
-```
 
+```
 
 ## Add states to GPS
 This creates and saves GPS_states.
+
 ```{r}
 # Load R workspace
 load("~/Projects/R/TWlogger/data_states.RData")
@@ -239,7 +237,7 @@ FullAccStatesGPS2 <- FullAccStatesGPS %>%
   # This associates each acceleration value with the following GPS hit
   mutate(gps_hit = lag(cumsum(!is.na(x)), default = 0))
 
-# Just the GPS data
+# Just the GPS data (x and y are in UTM)
 GPS_data <- FullAccStatesGPS2 %>% 
   drop_na(date.y) %>% 
   dplyr::select(ID, gps_hit, dt, dttz, x, y)
@@ -254,7 +252,6 @@ GPS_states <- FullAccStatesGPS2 %>%
   drop_na(dttz) 
 # rm(FullAccStatesGPS2)
 # rm(GPS_data)
-# GPS_data <- GPS_data %>% 
 GPS_statesSP <-   SpatialPointsDataFrame(cbind(GPS_states$x, GPS_states$y), GPS_states, match.ID = FALSE)
 crds <-   UTM_to_longlat(GPS_statesSP,20,'south')
 colnames(crds) <- c('long','lat')
@@ -272,15 +269,15 @@ data$hr <- hour(data$dttz)
 data$yday <- yday(data$dttz)
 data$yday <- sprintf('%03d',data$yday)
 data$yday <- paste('D',data$yday,sep='')
-data$indday <- as.factor(paste(data$name, data$yday, sep ='_', collapse = NULL))
+# data$indday <- as.factor(paste(data$name, data$yday, sep ='_', collapse = NULL))
 source('SunriseSunsetTimes.R')
 GPS_states <- data
 # Determine Season (calculated from 2017 solstices and equinoxes)
 GPS_states$yday <- yday(GPS_states$dttz)
 GPS_states$season <- rep('NA')
-GPS_states[which(GPS_states$yday > 79 & GPS_states$yday <= 171),]$season <- 'Fall'
+# GPS_states[which(GPS_states$yday > 79 & GPS_states$yday <= 171),]$season <- 'Fall'
 GPS_states[which(GPS_states$yday > 171 & GPS_states$yday <= 265),]$season <- 'Winter'
-GPS_states[which(GPS_states$yday > 265 & GPS_states$yday < 355),]$season <- 'Spring'
+# GPS_states[which(GPS_states$yday > 265 & GPS_states$yday < 355),]$season <- 'Spring'
 GPS_states[which(GPS_states$yday >= 355 | GPS_states$yday <= 79),]$season <- 'Summer'
 unique(GPS_states$season)
 
@@ -295,7 +292,8 @@ save(GPS_states,file="GPS_states.RData")
 
 ## Recalculate distance between points
 
-```{r}
+```{r }
+
 data <- GPS_states
 data$name <- GPS_states$ID
 source('pt2pt_fxns.R')   
@@ -322,7 +320,7 @@ data$dist <- as.numeric(unlist(v1))
 # data$dist <- data$dist * 0.621371
 ##converts duration from S to Hrs 
 data$dur <- as.numeric(unlist(v2))/3600
-##Speed is in Miles/Hr
+##Speed is in meters/Hr
 data$spd <- data$dist/data$dur
 data$dir <- as.numeric(unlist(v3))
 GPS_states <- data
@@ -331,178 +329,384 @@ save(GPS_states,file="GPS_states.RData")
 
 ```
 
-
-# Plot nighttime cumulative distance traveled by season
+## Load GPS_states
 
 ```{r}
-dist <-GPS_states %>% 
-  group_by(season,ID,dayNight) %>%
-  summarize(Dist=sum(dist/1000,na.rm = TRUE))
-
-mdist <- dist %>%
-  group_by(season,dayNight) %>% 
-  summarize(mDist=mean(Dist)) %>% View
-  mutate(prop=)
-m
-
-Pdist <-dist %>% 
-  ggplot()+
-  geom_boxplot(aes(dayNight,Dist,color=season)) + 
-  labs(x= "Period",
-       y = "Cumulative distance (km)",
-       title = "Cumulative distance (km) per period by Season") + 
-  theme_classic(base_size = 13) + 
-  scale_color_discrete(name = "Season") +
-  theme(plot.title = element_text(size=14)) +
-  theme(axis.text = element_text(size = 14, color = "black"),
-        axis.title.x = element_text(color="black", size=14),
-        axis.title.y = element_text(color="black", size=14))
-Pdist
-
-
-ggsave(Pdist, file="Cumulative distance (km) per period by Season.png",dpi=300)
-
-# Test for seasonal difference in nighttime cumulative distance traveled
-nDist <- GPS_states %>% 
-  group_by(season,dayNight,ID) %>% 
-  filter(dayNight=="Night") %>%
-  summarize(nDist=sum(dist/1000))
-# Test for normality
-shapiro.test(nDist$nDist[nDist$season=="Summer"])
-shapiro.test(nDist$nDist[nDist$season=="Winter"])
-
-# Test for equal variances
-var.test(nDist ~ season,data=nDist) #Variance is unequal p=0.03201
-
-# Test for seasonal differences
-test <- t.test(nDist ~ season,data=nDist,var.equal = TRUE)
-test
-
-sd(odbaRated$odbaGrate[odbaRated$season=="Summer"])
-sd(odbaRated$odbaGrate[odbaRated$season=="Winter"])
-
+load("~/Projects/R/TWlogger/GPS_states.RData")
 ```
 
 
-# Plot 24-hr ODBA by total distance traveled
+## Filter GPS positions by season, day, and night to plot by state and by ID
 
-```{r}
-sumDistWI <- GPS_states %>%
-  group_by(season,ID,dayNight) %>% 
+```{r echo=FALSE, warnings=FALSE}
+# Filter summer by day and night
+xyStateSU <- GPS_states %>%
+  filter(season=="Summer")
+
+xyStateWI <- GPS_states %>%
+  filter(season=="Winter")
+
+# Filter summer by day and night
+xyStateSUd <- GPS_states %>%
+  filter(season=="Summer",
+         dayNight=="Day")
+xyStateSUn <- GPS_states %>%
+  filter(season=="Summer",
+         dayNight=="Night")
+
+# Filter winter by day and night
+xyStateWId <- GPS_states %>%
   filter(season=="Winter",
-         dayNight=="Day") %>%
-  summarize(cumDistkm = sum(dist/1000,na.rm = TRUE),
-            meanStepLengthm = mean(dist,na.rm = TRUE),
-            maxStepLengthm = max(dist,na.rm = TRUE)) %>%
-  left_join(.,sumODBA) 
-mean(sumDistWI$maxStepLengthm)
+         dayNight=="Day")
+xyStateWIn <- GPS_states %>%
+  filter(season=="Winter",
+         dayNight=="Night")
 
-m1 <- lm(sumDist ~ sumODBA, data=sumDist)
-m2 <- lm(sumDist ~ sumODBA,data=sumDistSU)
-m3 <- lm(sumDist ~ sumODBA,data=sumDistWI)
-summary(m3)
-coef(m3)
-rsq(m1)
-rsq(m2)
-rsq(m3)
+# Filter summer by states
+xyStateSU4 <- GPS_states %>%
+  filter(season=="Summer",
+         state=="4")
+xyStateSU3 <- GPS_states %>%
+  filter(season=="Summer",
+         state=="3")
+xyStateSU2 <- GPS_states %>%
+  filter(season=="Summer",
+         state=="2")
+xyStateSU1 <- GPS_states %>%
+  filter(season=="Summer",
+         state=="1")
 
+# Filter by winter
+xyStateWI <- GPS_states %>%
+  filter(season=="Winter")
 
-plot(sumDist ~ sumODBA, data=sumDistWI, main = "Dist (m) vs ODBA")
-abline(m3)
-summary(m3)
+# Filter winter by states
+xyStateWI4 <- GPS_states %>%
+  filter(season=="Winter",
+         state=="4")
+xyStateWI3 <- GPS_states %>%
+  filter(season=="Winter",
+         state=="3")
+xyStateWI2 <- GPS_states %>%
+  filter(season=="Winter",
+         state=="2")
+xyStateWI1 <- GPS_states %>%
+  filter(season=="Winter",
+         state=="1")
 
+# Set zoom. Adjust this to fit all the data (20 is all the way zoomed in)
+mapZoomSU <- 14 
+mapZoomWI <- 12 
 
-psumDistSU <-  ggplot() +
-  geom_point(data=sumDistSU,aes(sumDist,sumODBA)) +
-  # geom_abline(intercept=coef(m1)[1],slope=coef(m1)[2]) +
-  geom_smooth(data=sumDistSU,aes(sumDist,sumODBA),method = "lm",color="black") +
-  # stat_smooth_func(geom="text",method="lm",hjust=0,parse=TRUE) +
-  labs(x="Total daily distance (km)",
-       y = "Total daily ODBA (g)",
-       title = "Daily ODBA by total daily distance traveled") + 
-  theme(legend.position="right", 
-        plot.title = element_text(hjust = 0.5)) +
-  theme(plot.title = element_text(size=14)) +
-  theme(axis.text = element_text(size = 14, color = "black"),
-        axis.title.x = element_text(color="black", size=14),
-        axis.title.y = element_text(color="black", size=14))# +
+# Plot the extent of this map (NOTE: must adjust zoom parameter)
+myMapSU <-  get_googlemap(center = c(lon = mean(c(min(xyStateSU$long), max(xyStateSU$long))),  
+                                   lat = mean(c(min(xyStateSU$lat),max(xyStateSU$lat)))),
+                        zoom = mapZoomSU, 
+                        scale = 2,
+                        extent="device",
+                        maptype="hybrid", #"terrain"
+                        style = c(feature = "all", element = "labels", visibility = "off"))
+myMapWI <-  get_googlemap(center = c(lon = mean(c(min(xyStateWI$long), max(xyStateWI$long))),  
+                                   lat = mean(c(min(xyStateWI$lat),max(xyStateWI$lat)))),
+                        zoom = mapZoomWI, 
+                        scale = 2,
+                        extent="device",
+                        maptype="hybrid", #"terrain"
+                        style = c(feature = "all", element = "labels", visibility = "off"))
 
-psumDistSU
+# State Colors (4 states)
+colState4 <- c("4" = "#B2182B", "3" = "#F4A582", "2" = "#92C5DE", "1"= "#2166AC")
+# State Colors (2 states)
+colState2 <- c("4" = "#B2182B", "3" = "#B2182B", "2" = "#2166AC", "1"= "#2166AC")
 
-psumDistWI <-  ggplot() +
-  geom_point(data=sumDistWI,aes(sumDist,sumODBA)) +
-  # geom_abline(intercept=coef(m1)[1],slope=coef(m1)[2]) +
-  geom_smooth(data=sumDistWI,aes(sumDist,sumODBA),method = "lm",color="black") +
-  # stat_smooth_func(geom="text",method="lm",hjust=0,parse=TRUE) +
-  labs(x="Total daily distance (km)",
-       y = "Total daily ODBA (g)",
-       title = "Daily ODBA by total daily distance traveled") + 
-  theme(legend.position="right", 
-        plot.title = element_text(hjust = 0.5)) +
-  theme(plot.title = element_text(size=14)) +
-  theme(axis.text = element_text(size = 14, color = "black"),
-        axis.title.x = element_text(color="black", size=14),
-        axis.title.y = element_text(color="black", size=14))# +
+shapeSU <- c("B50"=0, "C51"=1, "G53"=2, "M57"=3, "X56"=4, "Z55"=5, "Z59"=6)
 
-psumDistWI           
-
-# Save a file at 300 ppi
-ggsave(psumDist, file="Daily ODBA by total daily distance traveled.png",dpi=300)
 ```
 
-#### Plot individuals to validate models
+#### Plot seasonal distribution of states
 
 ```{r}
-PG53 <- ggmap(myMapSU) + 
-  geom_point(data = xyStateSUd[xyStateSUd$ID=="G53",],aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
+PxyStateSUd <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSUd,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
+  scale_color_manual(values = colState4) +
+  scale_shape_manual(values = shapeSU) + 
   scale_alpha(guide = 'none') +
   coord_fixed(1.3) +
-  labs(x="Longitude",
-       y = "Latitude",
-       title = "Summer daytime distribution by individual") + 
-  theme(legend.position="right", 
-        plot.title = element_text(hjust = 0.5)) +
-  theme(plot.title = element_text(size=14)) +
-  theme(axis.text = element_text(size = 14, color = "black"),
-        axis.title.x = element_text(color="black", size=14),
-        axis.title.y = element_text(color="black", size=14))
-PG53
+  annotate("text", x = -60.22, y = -51.2915, label = "a", color="white") +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank())
+# PxyStateSUd
+
+PxyStateSUn <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSUn,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
+  scale_color_manual(values = colState4) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  annotate("text", x = -60.22, y = -51.2915, label = "c", color="white") +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank())
+# PxyStateSUn
+
+PxyStateSU <- ggarrange(PxyStateSUd,PxyStateSUn,nrow=2)
+# PxyStateSU
+# ggsave(PxyStateSU, file="Summer distribution of states.png",width=12, height=8, dpi=300)
+
+# Plot winter distribution of states
+PxyStateWId <- ggmap(myMapWI) + 
+  geom_point(data = xyStateWId,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
+  scale_color_manual(values = colState4) +
+  scale_shape_manual(values = shapeSU) + 
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  annotate("text", x = -60.05, y = -51.285, label = "b", color="white") +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank()) +
+  geom_rect(aes(xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29),
+  alpha = .5,fill=NA,linetype="solid",color="white")
+  # annotate("rect", xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29,
+  # alpha = .5)
+PxyStateWId
+
+PxyStateWIn <- ggmap(myMapWI) + 
+  geom_point(data = xyStateWIn,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
+  scale_color_manual(values = colState4) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  annotate("text", x = -60.05, y = -51.285, label = "d", color="white") +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank()) +
+  geom_rect(aes(xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29),
+  alpha = .5,fill=NA,linetype="solid",color="white")
+  # annotate("rect", xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29,
+  # alpha = .5)
+# PxyStateWIn
+
+
+PxyStateWI <- ggarrange(PxyStateWId,PxyStateWIn,nrow=2)
+# PxyStateWI
+
+PxyStateSeas <- ggarrange(PxyStateSU,PxyStateWI,ncol=2)
+PxyStateSeas
+ggsave(PxyStateSeas, file="Seasonal distribution of states.png",width=12, height=8, dpi=300)
 ```
 
+#### Plot seasonal distribution by ID
 
+```{r echo=FALSE, warnings=FALSE}
+# Plot summer daytime distribution of individuals
+PxyIDSUd <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSUd,aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank()) +
+  annotate("text", x = -60.22, y = -51.2915, label = "a", color="white")
+  
+PxyIDSUd
 
-#### Plot daytime ODBA by daytime total distance traveled
+# Plot summer nighttime distribution of individuals
+PxyIDSUn <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSUn,aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank()) +
+  annotate("text", x = -60.22, y = -51.2915, label = "c", color="white")
+PxyIDSUn
+
+PxyIDSU <- ggarrange(PxyIDSUd,PxyIDSUn,nrow=2)
+# PxyIDSU
+# ggsave(PxyIDSU, file="Summer distribution by ID.png",width=12, height=8, dpi=300)
+
+# Plot winter daytime distribution of individuals
+PxyIDWId <- ggmap(myMapWI) + 
+  geom_point(data = xyStateWId,aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank()) +
+  annotate("text", x = -60.05, y = -51.285, label = "b", color="white") +
+  geom_rect(aes(xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29),
+  alpha = .5,fill=NA,linetype="solid",color="white")
+  # annotate("rect", xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29,
+  # alpha = .5)
+PxyIDWId
+
+PxyIDWIn <- ggmap(myMapWI) + 
+  geom_point(data = xyStateWIn,aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank()) +
+  annotate("text", x = -60.05, y = -51.285, label = "d", color="white") +
+  geom_rect(aes(xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29),
+  alpha = .5,fill=NA,linetype="solid",color="white")
+  # annotate("rect", xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29,
+  # alpha = .5)
+PxyIDWIn
+
+PxyIDWI <- ggarrange(PxyIDWId,PxyIDWIn,nrow=2)
+# PxyIDWI
+
+PxyIDSeas <- ggarrange(PxyIDSU,PxyIDWI,ncol=2)
+ggsave(PxyIDSeas, file="Seasonal distribution by individual.png",width=12, height=8, dpi=300)
+
+```
+
+## Calculate KDE (95 and 50%)
+GPS_states already has x, y, lat, and long in the dataframe.
 
 ```{r}
-sumDistN <- GPS_states %>%
-  group_by(season,ID,dayNight) %>% 
-  filter(dayNight=="Night") %>% 
-  summarize(sumDistN = sum(dist/1000,na.rm = TRUE)) %>%
-  left_join(.,sumODBA) 
+GPS_SU <- GPS_states %>%
+  subset(season=="Summer")
+GPS_WI <- GPS_states %>%
+  subset(season=="Winter")
 
-# Test for normality
-shapiro.test(sumDistN$sumDistN[sumDistN$season=="Summer"])
-shapiro.test(sumDistN$sumDistN[sumDistN$season=="Winter"])
+xySU <- GPS_SU[,c(9,8)]
+xyWI <- GPS_WI[,c(9,8)]
+plot(xySU)
 
-# Test for equal variances
-var.test(sumDistN ~ season,data=sumDistN) #Variance is unequal p=0.03201
+spdfSU <- SpatialPointsDataFrame(coords = xySU, data = GPS_SU,
+                               proj4string = CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+spdfWI <- SpatialPointsDataFrame(coords = xyWI, data = GPS_WI,
+                               proj4string = CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
 
-# Test for seasonal differences
-test <- t.test(sumDistN ~ season,data=sumDistN,var.equal = TRUE)
-test
+# transform lat/long to UTM and rename the columns for ease down the road
+spdfSUutm <- spTransform(spdfSU, CRS("+proj=utm +zone=20S ellps=WGS84"))
+spdfWIutm <- spTransform(spdfWI, CRS("+proj=utm +zone=20S ellps=WGS84"))
 
-sd(sumDistN$sumDistN[sumDistN$season=="Summer"])
-sd(sumDistN$sumDistN[sumDistN$season=="Winter"])
+str(spdfSU)
+UDSU <- kernelUD(spdfSUutm[,1],h="href", same4all = TRUE, grid = 500)
+UDSUall <- kernelUD(spdfSUutm[,24],h="href", same4all = TRUE, grid = 500)
+UDWI <- kernelUD(spdfWIutm[,1],h="href", same4all = TRUE, grid = 500)
+UDWIall <- kernelUD(spdfWIutm[,24],h="href", same4all = TRUE, grid = 500)
+
+# get our core and HR estimates based on the UD
+kdeAreaSU <- kernel.area(UDSU, percent=c(50, 95), unin = "m", unout=c("km2"))
+kdeAreaWI <- kernel.area(UDWI, percent=c(50, 95), unin = "m", unout=c("km2"))
+
+kdeSU <- as.data.frame(t(kdeAreaSU))
+kdeWI <- as.data.frame(t(kdeAreaWI))
+
+# 95% KDE seasonal mean and SD
+mkdeSU95 <- mean(kdeSU$`95`)
+sdkdeSU95 <- sd(kdeSU$`95`)
+mkdeWI95 <- mean(kdeWI$`95`)
+sdkdeWI95 <- sd(kdeWI$`95`)
+
+# 50% KDE seasonal mean and SD
+# KJH change this
+mkdeSU50 <- mean(kdeSU$`50`)
+sdkdeSU50 <- sd(kdeSU$`50`)
+mkdeWI50 <- mean(kdeWI$`50`)
+sdkdeSWI50 <- sd(kdeWI$`50`)
+
+# Extract home range contours and transform to lat/long
+homerangeSU50 <- spTransform(getverticeshr(UDSU, 50), CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+homerangeSU95 <- spTransform(getverticeshr(UDSU, 95), CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+homerangeSU50all <- spTransform(getverticeshr(UDSUall, 50), CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+homerangeSU95all <- spTransform(getverticeshr(UDSUall, 95), CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+
+homerangeWI50 <- spTransform(getverticeshr(UDWI, 50), CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+homerangeWI95 <- spTransform(getverticeshr(UDWI, 95), CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+homerangeWI50all <- spTransform(getverticeshr(UDWIall, 50), CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+homerangeWI95all <- spTransform(getverticeshr(UDWIall, 95), CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+
+# Check to make sure these look right
+plot(homerangeSU50)
+plot(homerangeSU95)
+plot(homerangeWI50)
+plot(homerangeWI95)
+
+# Fortify converts polygons into a dataframe
+hrSU50df <- fortify(homerangeSU50)
+hrSU95df <- fortify(homerangeSU95)
+hrSU50alldf <- fortify(homerangeSU50all)
+hrSU95alldf <- fortify(homerangeSU95all)
+
+hrWI50df <- fortify(homerangeWI50)
+hrWI95df <- fortify(homerangeWI95)
+hrWI50alldf <- fortify(homerangeWI50all)
+hrWI95alldf <- fortify(homerangeWI95all)
+
+# KJH recreate df with HR m +/- SD
+# write.csv(hr, file="HR.csv", row.names = FALSE)
 ```
 
-#### Calculate nighttime total distance traveled to cross-validate exclusion
+#### Plot KDEs
 
 ```{r}
+# Plot summer KDE (50 and 95)
+PkdeSU <- ggmap(myMapSU) + #ggplot() + 
+  # geom_polygon(data=hrSU95df, aes(y=lat,x=long, group=group, color=id),fill=NA, linetype="blank",alpha= .25) +
+  # geom_polygon(data=hrSU95df, aes(y=lat,x=long, group=group, color=id),fill=NA, alpha= .8, size=1.5,linetype="solid") +
+  # geom_polygon(data=hrSU50df, aes(y=lat,x=long, group=group, color=id),fill=NA, linetype="blank",alpha= .25) +
+  # geom_polygon(data=hrSU50df, aes(y=lat,x=long, group=group, color=id),fill=NA, alpha= .8, size=1.5,linetype=3) +
+  # stat_density2d(aes(x = long, y = lat, group=ID, fill = ..level.., alpha = ..level..),
+  #   size = 0.01, bins = 50, data = GPS_SU,
+  #   geom = "polygon") +
+  geom_point(data = GPS_SU, aes(y=lat,x=long, color=ID ),size = .6,alpha = .8) +
+  geom_polygon(data=hrSU95alldf, aes(y=lat,x=long, group=group),fill=NA, color="white", size = 1.5) +
+  geom_polygon(data=hrSU50alldf, aes(y=lat,x=long, group=group),fill=NA, color="white",size = 1.5,linetype=3) +
+  annotate("text", x = -60.22, y = -51.2915, label = "a", color="white") +
+  coord_fixed(1.3) +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank()) 
+PkdeSU
+
+# Plot winter KDE (50 and 95)
+# First adjust zoom because different than plot by state and ID above
+mapZoomWIkde <- 11
+myMapWIkde <-  get_googlemap(center = c(lon = mean(c(min(xyStateWI$long), max(xyStateWI$long))),
+                                        lat = mean(c(min(xyStateWI$lat),max(xyStateWI$lat)))),
+                        zoom = mapZoomWIkde, 
+                        scale = 2,
+                        extent="device",
+                        maptype="hybrid", #"terrain"
+                        style = c(feature = "all", element = "labels", visibility = "off"))
+
+PkdeWI <- ggmap(myMapWIkde) + #ggplot() + 
+  # geom_polygon(data=hrWI95df, aes(y=lat,x=long, group=group, color=id),fill=NA, linetype="blank",alpha= .25) +
+  # geom_polygon(data=hrWI95df, aes(y=lat,x=long, group=group, color=id),fill=NA, alpha= .8, size=1.5,linetype="solid") +
+  # geom_polygon(data=hrWI50df, aes(y=lat,x=long, group=group, color=id),fill=NA, linetype="blank",alpha= .25) +
+  # geom_polygon(data=hrWI50df, aes(y=lat,x=long, group=group, color=id),fill=NA, alpha= .8, size=1.5,linetype=3) +
+  geom_point(data = GPS_WI, aes(y=lat,x=long, color=ID ),size = .6,alpha = .8) +
+  geom_polygon(data=hrWI95alldf, aes(y=lat,x=long, group=group),fill=NA, color="white", size = 1.5) +
+  geom_polygon(data=hrWI50alldf, aes(y=lat,x=long, group=group),fill=NA, color="white",size = 1.5,linetype=3) +
+  annotate("text", x = -59.95, y = -51.22, label = "b", color="white") +
+  coord_fixed(1.3) +
+  geom_rect(aes(xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29),
+  alpha = .5,fill=NA,linetype="solid",color="white") +
+  theme(legend.position = "none") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank()) 
+PkdeWI 
+  
+PkdeSeas <- ggarrange(PkdeSU,PkdeWI,ncol=2)
+PkdeSeas
+ggsave(PkdeSeas, file="Seasonal kde_white and Neck box.png",width=12, height=8, dpi=300)
 
 ```
 
-#### Plot seasonal difference in daily distance traveled by solar hour
+## Backup R workspace
 
+```{r}
+save.image(file="backup_190617.RData")
+save(GPS_states,file="GPS_states_190617.RData")
+```
+
+## Unused plots
+
+#### Plot seasonal difference in daily distance traveled by solar hour (same style as ODBA by solar hour)
 
 ```{r}
 # Create SolarMidnight based hourly bins
@@ -598,316 +802,167 @@ rm(meanlineSU,meanlineWI,PodbaSum24SU,PodbaSum24WI)
 ggsave(PGPS24Seas, file="Seasonal cumulative distance per solar hour_shaded.png",dpi=300)
 ```
 
-
-#### Filter GPS positions to plot by state and by ID
-```{r echo=FALSE, warnings=FALSE}
-# Filter summer by day and night
-xyStateSU <- GPS_states %>%
-  filter(season=="Summer")
-
-xyStateWI <- GPS_states %>%
-  filter(season=="Winter")
-
-# Filter summer by day and night
-xyStateSUd <- GPS_states %>%
-  filter(season=="Summer",
-         dayNight=="Day")
-xyStateSUn <- GPS_states %>%
-  filter(season=="Summer",
-         dayNight=="Night")
-
-# Filter winter by day and night
-xyStateWId <- GPS_states %>%
-  filter(season=="Winter",
-         dayNight=="Day")
-xyStateWIn <- GPS_states %>%
-  filter(season=="Winter",
-         dayNight=="Night")
-
-# Filter summer by states
-xyStateSU4 <- GPS_states %>%
-  filter(season=="Summer",
-         state=="4")
-xyStateSU3 <- GPS_states %>%
-  filter(season=="Summer",
-         state=="3")
-xyStateSU2 <- GPS_states %>%
-  filter(season=="Summer",
-         state=="2")
-xyStateSU1 <- GPS_states %>%
-  filter(season=="Summer",
-         state=="1")
-
-# Filter by winter
-xyStateWI <- GPS_states %>%
-  filter(season=="Winter")
-
-# Filter winter by states
-xyStateWI4 <- GPS_states %>%
-  filter(season=="Winter",
-         state=="4")
-xyStateWI3 <- GPS_states %>%
-  filter(season=="Winter",
-         state=="3")
-xyStateWI2 <- GPS_states %>%
-  filter(season=="Winter",
-         state=="2")
-xyStateWI1 <- GPS_states %>%
-  filter(season=="Winter",
-         state=="1")
-
-# Set zoom. Adjust this to fit all the data (20 is all the way zoomed in)
-mapZoomSU <- 14 
-mapZoomWI <- 12 
-
-# Plot the extent of this map (NOTE: must adjust zoom parameter)
-myMapSU <-  get_googlemap(center = c(lon = mean(c(min(xyStateSU$long), max(xyStateSU$long))),  
-                                   lat = mean(c(min(xyStateSU$lat),max(xyStateSU$lat)))),
-                        zoom = mapZoomSU, 
-                        scale = 2,
-                        extent="device",
-                        maptype="hybrid", #"terrain"
-                        style = c(feature = "all", element = "labels", visibility = "off"))
-myMapWI <-  get_googlemap(center = c(lon = mean(c(min(xyStateWI$long), max(xyStateWI$long))),  
-                                   lat = mean(c(min(xyStateWI$lat),max(xyStateWI$lat)))),
-                        zoom = mapZoomWI, 
-                        scale = 2,
-                        extent="device",
-                        maptype="hybrid", #"terrain"
-                        style = c(feature = "all", element = "labels", visibility = "off"))
-
-# State Colors (4 states)
-colState4 <- c("4" = "#B2182B", "3" = "#F4A582", "2" = "#92C5DE", "1"= "#2166AC")
-# State Colors (2 states)
-colState2 <- c("4" = "#B2182B", "3" = "#B2182B", "2" = "#2166AC", "1"= "#2166AC")
-
-shapeSU <- c("B50"=0, "C51"=1, "G53"=2, "M57"=3, "X56"=4, "Z55"=5, "Z59"=6)
-
-```
-
-
-#### Plot GPS positions by state
-This needs love
+#### Plot nighttime cumulative distance traveled by season
 
 ```{r}
-# THIS NEEDS LOVE: Do density of points? Smaller points? 
-PxyStateSUd <- ggmap(myMapSU) + 
-  geom_point(data = xyStateSUd,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
-  scale_color_manual(values = colState4) +
-  scale_shape_manual(values = shapeSU) + 
-  scale_alpha(guide = 'none') +
-  coord_fixed(1.3) +
-  annotate("text", x = -60.22, y = -51.2915, label = "a", color="white") +
-  # labs(x="Longitude",
-  #      y = "Latitude",
-  #      title = "Summer daytime distribution of states") + 
-  theme(legend.position = "none") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank())
-  # theme(legend.position="right", 
-  #       plot.title = element_text(hjust = 0.5)) +
-  # theme(plot.title = element_text(size=14)) +
-  # theme(axis.text = element_text(size = 14, color = "black"),
-  #       axis.title.x = element_text(color="black", size=14),
-  #       axis.title.y = element_text(color="black", size=14))# +
-  # facet_wrap(~ ID, nrow=3)
-# PxyStateSUd
+dist <-GPS_states %>% 
+  group_by(season,ID,dayNight) %>%
+  summarize(Dist=sum(dist/1000,na.rm = TRUE))
 
-PxyStateSUn <- ggmap(myMapSU) + 
-  geom_point(data = xyStateSUn,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
-  scale_color_manual(values = colState4) +
-  scale_alpha(guide = 'none') +
-  coord_fixed(1.3) +
-  annotate("text", x = -60.22, y = -51.2915, label = "c", color="white") +
-  # labs(x="Longitude",
-  #      y = "Latitude",
-  #      title = "Summer nighttime distribution of states") + 
-  theme(legend.position = "none") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank())
-  # theme(legend.position="right", 
-  #       plot.title = element_text(hjust = 0.5)) +
-  # theme(plot.title = element_text(size=14)) +
-  # theme(axis.text = element_text(size = 14, color = "black"),
-  #       axis.title.x = element_text(color="black", size=14),
-  #       axis.title.y = element_text(color="black", size=14))# +
-  # facet_wrap(~ ID, nrow=3)
-# PxyStateSUn
+mdist <- dist %>%
+  group_by(season,dayNight) %>% 
+  summarize(mDist=mean(Dist)) %>% View
+  mutate(prop=)
+m
 
-PxyStateSU <- ggarrange(PxyStateSUd,PxyStateSUn,nrow=2)
-# PxyStateSU
-# ggsave(PxyStateSU, file="Summer distribution of states.png",width=12, height=8, dpi=300)
-
-# Plot winter distribution of states
-PxyStateWId <- ggmap(myMapWI) + 
-  geom_point(data = xyStateWId,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
-  scale_color_manual(values = colState4) +
-  scale_shape_manual(values = shapeSU) + 
-  scale_alpha(guide = 'none') +
-  coord_fixed(1.3) +
-  annotate("text", x = -60.05, y = -51.285, label = "b", color="white") +
-  # labs(x="Longitude",
-  #      y = "Latitude",
-  #      title = "Winter daytime distribution of states") + 
-  theme(legend.position = "none") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank()) +
-  # theme(legend.position="right", 
-  #       plot.title = element_text(hjust = 0.5)) +
-  # theme(plot.title = element_text(size=14)) +
-  # theme(axis.text = element_text(size = 14, color = "black"),
-  #       axis.title.x = element_text(color="black", size=14),
-  #       axis.title.y = element_text(color="black", size=14))# +
-  # facet_wrap(~ ID, nrow=3) +
-  annotate("rect", xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29,
-  alpha = .5)
-# PxyStateWId
-
-PxyStateWIn <- ggmap(myMapWI) + 
-  geom_point(data = xyStateWIn,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
-  scale_color_manual(values = colState4) +
-  scale_alpha(guide = 'none') +
-  coord_fixed(1.3) +
-  annotate("text", x = -60.05, y = -51.285, label = "d", color="white") +
-  # labs(x="Longitude",
-  #      y = "Latitude",
-  #      title = "Winter nighttime distribution of states") + 
-  # theme(legend.position="right", 
-  #       plot.title = element_text(hjust = 0.5)) +
-  theme(legend.position = "none") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank()) +
-  # theme(plot.title = element_text(size=14)) +
-  # theme(axis.text = element_text(size = 14, color = "black"),
-  #       axis.title.x = element_text(color="black", size=14),
-  #       axis.title.y = element_text(color="black", size=14))# +
-  # facet_wrap(~ ID, nrow=3) +
-  annotate("rect", xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29,
-  alpha = .5)
-# PxyStateWIn
+Pdist <-dist %>% 
+  ggplot()+
+  geom_boxplot(aes(dayNight,Dist,color=season)) + 
+  labs(x= "Period",
+       y = "Cumulative distance (km)",
+       title = "Cumulative distance (km) per period by Season") + 
+  theme_classic(base_size = 13) + 
+  scale_color_discrete(name = "Season") +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+Pdist
 
 
-PxyStateWI <- ggarrange(PxyStateWId,PxyStateWIn,nrow=2)
-# PxyStateWI
+ggsave(Pdist, file="Cumulative distance (km) per period by Season.png",dpi=300)
 
-PxyStateSeas <- ggarrange(PxyStateSU,PxyStateWI,ncol=2)
-PxyStateSeas
-# PxyStateSeas <- annotate_figure(PxyStateSeas,top = text_grob("Seasonal distributions of state classifications", color = "black", size = 14, just="left"))
+# Test for seasonal difference in nighttime cumulative distance traveled
+nDist <- GPS_states %>% 
+  group_by(season,dayNight,ID) %>% 
+  filter(dayNight=="Night") %>%
+  summarize(nDist=sum(dist/1000))
+# Test for normality
+shapiro.test(nDist$nDist[nDist$season=="Summer"])
+shapiro.test(nDist$nDist[nDist$season=="Winter"])
 
-ggsave(PxyStateSeas, file="Seasonal distribution of states.png",width=12, height=8, dpi=300)
-```
+# Test for equal variances
+var.test(nDist ~ season,data=nDist) #Variance is unequal p=0.03201
 
+# Test for seasonal differences
+test <- t.test(nDist ~ season,data=nDist,var.equal = TRUE)
+test
 
-## Plot GPS positions by ID
-```{r echo=FALSE, warnings=FALSE}
-# Plot summer daytime distribution of individuals
-PxyIDSUd <- ggmap(myMapSU) + 
-  geom_point(data = xyStateSUd,aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
-  # scale_color_manual(values = colState4) +
-  # scale_shape_manual(values = shapeSU) + 
-  scale_alpha(guide = 'none') +
-  coord_fixed(1.3) +
-  theme(legend.position = "none") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank()) +
-  annotate("text", x = -60.22, y = -51.2915, label = "a", color="white")
-  # labs(x="Longitude",
-  #      y = "Latitude",
-  #      title = "Summer daytime distribution by individual") + 
-  # theme(legend.position="right", 
-  #       plot.title = element_text(hjust = 0.5)) +
-  # theme(plot.title = element_text(size=14)) +
-  # theme(axis.text = element_text(size = 14, color = "black"),
-  #       axis.title.x = element_text(color="black", size=14),
-  #       axis.title.y = element_text(color="black", size=14))# +
-  # facet_wrap(~ ID, nrow=3)
-# PxyIDSUd
-
-# Plot summer nighttime distribution of individuals
-PxyIDSUn <- ggmap(myMapSU) + 
-  geom_point(data = xyStateSUn,aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
-  # scale_color_manual(values = colState4) +
-  scale_alpha(guide = 'none') +
-  coord_fixed(1.3) +
-  theme(legend.position = "none") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank()) +
-  annotate("text", x = -60.22, y = -51.2915, label = "c", color="white")
-  # labs(x="Longitude",
-  #      y = "Latitude",
-  #      title = "Summer nighttime distribution by individual") + 
-  # theme(legend.position="right", 
-  #       plot.title = element_text(hjust = 0.5)) +
-  # theme(plot.title = element_text(size=14)) +
-  # theme(axis.text = element_text(size = 14, color = "black"),
-  #       axis.title.x = element_text(color="black", size=14),
-  #       axis.title.y = element_text(color="black", size=14))# +
-  # facet_wrap(~ ID, nrow=3)
-# PxyIDSUn
-
-PxyIDSU <- ggarrange(PxyIDSUd,PxyIDSUn,nrow=2)
-# PxyIDSU
-# ggsave(PxyIDSU, file="Summer distribution by ID.png",width=12, height=8, dpi=300)
-
-# Plot winter daytime distribution of individuals
-PxyIDWId <- ggmap(myMapWI) + 
-  geom_point(data = xyStateWId,aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
-  # scale_color_manual(values = colState4) +
-  # scale_shape_manual(values = shapeSU) + 
-  scale_alpha(guide = 'none') +
-  coord_fixed(1.3) +
-  theme(legend.position = "none") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank()) +
-  annotate("text", x = -60.05, y = -51.285, label = "b", color="white") +
-  # labs(x="Longitude",
-  #      y = "Latitude",
-  #      title = "Winter daytime distribution by individual") + 
-  # theme(legend.position="right", 
-  #       plot.title = element_text(hjust = 0.5)) +
-  # theme(plot.title = element_text(size=14)) +
-  # theme(axis.text = element_text(size = 14, color = "black"),
-  #       axis.title.x = element_text(color="black", size=14),
-  #       axis.title.y = element_text(color="black", size=14))# +
-  # facet_wrap(~ ID, nrow=3)
-  annotate("rect", xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29,
-  alpha = .5)
-# PxyIDWId
-
-PxyIDWIn <- ggmap(myMapWI) + 
-  geom_point(data = xyStateWIn,aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
-  # scale_color_manual(values = colState4) +
-  scale_alpha(guide = 'none') +
-  coord_fixed(1.3) +
-  theme(legend.position = "none") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank()) +
-  annotate("text", x = -60.05, y = -51.285, label = "d", color="white") +
-  # labs(x="Longitude",
-  #      y = "Latitude",
-  #      title = "Winter nighttime distribution by individual") + 
-  # theme(legend.position="right", 
-  #       plot.title = element_text(hjust = 0.5)) +
-  # theme(plot.title = element_text(size=14)) +
-  # theme(axis.text = element_text(size = 14, color = "black"),
-  #       axis.title.x = element_text(color="black", size=14),
-  #       axis.title.y = element_text(color="black", size=14))# +
-  # facet_wrap(~ ID, nrow=3)
-  annotate("rect", xmin = -60.255, xmax = -60.22, ymin = -51.32, ymax = -51.29,
-  alpha = .5)
-# PxyIDWIn
-
-
-PxyIDWI <- ggarrange(PxyIDWId,PxyIDWIn,nrow=2)
-# PxyIDWI
-
-PxyIDSeas <- ggarrange(PxyIDSU,PxyIDWI,ncol=2)
-ggsave(PxyIDSeas, file="Seasonal distribution by individual.png",width=12, height=8, dpi=300)
+sd(odbaRated$odbaGrate[odbaRated$season=="Summer"])
+sd(odbaRated$odbaGrate[odbaRated$season=="Winter"])
 
 ```
 
+#### Plot 24-hr ODBA by total distance traveled
 
-## Create Summer plots, one per state, colored by ID
+```{r}
+sumDistWI <- GPS_states %>%
+  group_by(season,ID,dayNight) %>% 
+  filter(season=="Winter",
+         dayNight=="Day") %>%
+  summarize(cumDistkm = sum(dist/1000,na.rm = TRUE),
+            meanStepLengthm = mean(dist,na.rm = TRUE),
+            maxStepLengthm = max(dist,na.rm = TRUE)) %>%
+  left_join(.,sumODBA) 
+mean(sumDistWI$maxStepLengthm)
+
+m1 <- lm(sumDist ~ sumODBA, data=sumDist)
+m2 <- lm(sumDist ~ sumODBA,data=sumDistSU)
+m3 <- lm(sumDist ~ sumODBA,data=sumDistWI)
+summary(m3)
+coef(m3)
+rsq(m1)
+rsq(m2)
+rsq(m3)
+
+
+plot(sumDist ~ sumODBA, data=sumDistWI, main = "Dist (m) vs ODBA")
+abline(m3)
+summary(m3)
+
+
+psumDistSU <-  ggplot() +
+  geom_point(data=sumDistSU,aes(sumDist,sumODBA)) +
+  # geom_abline(intercept=coef(m1)[1],slope=coef(m1)[2]) +
+  geom_smooth(data=sumDistSU,aes(sumDist,sumODBA),method = "lm",color="black") +
+  # stat_smooth_func(geom="text",method="lm",hjust=0,parse=TRUE) +
+  labs(x="Total daily distance (km)",
+       y = "Total daily ODBA (g)",
+       title = "Daily ODBA by total daily distance traveled") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))# +
+
+psumDistSU
+
+psumDistWI <-  ggplot() +
+  geom_point(data=sumDistWI,aes(sumDist,sumODBA)) +
+  # geom_abline(intercept=coef(m1)[1],slope=coef(m1)[2]) +
+  geom_smooth(data=sumDistWI,aes(sumDist,sumODBA),method = "lm",color="black") +
+  # stat_smooth_func(geom="text",method="lm",hjust=0,parse=TRUE) +
+  labs(x="Total daily distance (km)",
+       y = "Total daily ODBA (g)",
+       title = "Daily ODBA by total daily distance traveled") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))# +
+
+psumDistWI           
+
+# Save a file at 300 ppi
+ggsave(psumDist, file="Daily ODBA by total daily distance traveled.png",dpi=300)
+```
+
+#### Plot individual distribution to validate models
+
+```{r}
+PG53 <- ggmap(myMapSU) + 
+  geom_point(data = xyStateSUd[xyStateSUd$ID=="G53",],aes(x=long,y=lat, color = ID),alpha=0.8,size=0.8) +
+  scale_alpha(guide = 'none') +
+  coord_fixed(1.3) +
+  labs(x="Longitude",
+       y = "Latitude",
+       title = "Summer daytime distribution by individual") + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PG53
+```
+
+#### Plot daytime ODBA by daytime total distance traveled
+
+```{r}
+sumDistN <- GPS_states %>%
+  group_by(season,ID,dayNight) %>% 
+  filter(dayNight=="Night") %>% 
+  summarize(sumDistN = sum(dist/1000,na.rm = TRUE)) %>%
+  left_join(.,sumODBA) 
+
+# Test for normality
+shapiro.test(sumDistN$sumDistN[sumDistN$season=="Summer"])
+shapiro.test(sumDistN$sumDistN[sumDistN$season=="Winter"])
+
+# Test for equal variances
+var.test(sumDistN ~ season,data=sumDistN) #Variance is unequal p=0.03201
+
+# Test for seasonal differences
+test <- t.test(sumDistN ~ season,data=sumDistN,var.equal = TRUE)
+test
+
+sd(sumDistN$sumDistN[sumDistN$season=="Summer"])
+sd(sumDistN$sumDistN[sumDistN$season=="Winter"])
+```
+
+#### Create Summer plots, one per state, colored by ID
 ```{r}
 PxyStateSU4 <- ggmap(myMapSU) + 
   geom_point(data = xyStateSU4,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
@@ -972,8 +1027,7 @@ PxyStateSUperState
 ggsave(PxyStateSUperState, file="Summer distribution of states.png",width=12, height=6, dpi=300)
 ```
 
-
-## Create winter plots, one per state, colored by ID
+#### Create winter plots, one per state, colored by ID
 ```{r}
 PxyStateWI4 <- ggmap(myMapWI) + 
   geom_point(data = xyStateWI4,aes(x=long,y=lat, color = ID),alpha=1,size=0.8) +
@@ -1039,8 +1093,7 @@ ggsave(PxyStateWIperState, file="Winter distribution of states.png",width=12, he
 
 ```
 
-
-## Plot time series by 10 minute intervals
+#### Plot time series by 10 minute intervals
 JAF: This is not working.
 ```{r}
 depTimeP<- GPS_states %>%
@@ -1091,8 +1144,7 @@ p
 }
 ```
 
-
-## Plots -- directly copied from JRspatial (still need to update)
+#### Plots -- directly copied from JRspatial (still need to update)
 ```{r}
 # Distribution of step lengths by season
 hist(GPS_states$dist[GPS_states$season=="Summer"],breaks = seq(0,2500,10))
@@ -1176,9 +1228,7 @@ bpall <- ggarrange(bp1,bp2,bp3,bp4,nrow=2,ncol=2)
 ggsave(bpall, file="Seasonal Mean Distance and Step Lengths.png",width=12, height=6, dpi=300)
 ```
 
-
-## MC random save while showing me R functions
-
+#### MC random save while showing me R functions
 ```{r}
 foo <- GPS_states %>%
   group_by(state, season) %>% 
@@ -1224,97 +1274,3 @@ image(ud)
 overlapUD <- kerneloverlaphr(ud, method = "BA",
                              percent = 95, conditional = FALSE)
 ```
-
-
-
-## Calculate KDE (95 and 50%)
-
-```{r}
-# Create spatial points
-GPS_statesSP <-   SpatialPointsDataFrame(cbind(GPS_states$x, GPS_states$y), GPS_states, match.ID = FALSE)
-# Convert UTM to lat long
-crds <-   UTM_to_longlat(GPS_statesSP,20,'south')
-colnames(crds) <- c('long','lat')
-GPS_states$lat <- crds$lat
-GPS_states$long <- crds$long
-
-# For spatial distribution of states, convert state variable to class "factor"
-GPS_states$state <-as.factor(GPS_states$state)
-
-# Create coordinate reference system (CRS)
-CRSstring <- paste0(
-    "+proj=utm +zone=20",
-    " +ellps=WGS84",
-    " +", "south")
-
-# Attempt to debug dawnT and duskT issue that keeps generating warnings
-GPS_states <- GPS_states %>% ungroup()
-# GPS_states$duskT <-NULL
-# GPS_states$dawnT <-NULL
-
-# Convert lat long to UTM
-dataset_SP <- longlat_to_UTM(GPS_states$long,GPS_states$lat)
-# Combine GPS spatial data points and state classifications  
-dataset_SP_All <-bind_cols(dataset_SP,GPS_states) # combine all data
-# Create spatial data point frame
-dataset_SP_All <- SpatialPointsDataFrame(cbind(dataset_SP$x, dataset_SP$y), dataset_SP_All, match.ID = FALSE)
-# Remove duplicate times
-# dataset_SP_All <- dataset_SP_All[!duplicated(dataset_SP_All$dt),] 
-# Make sure there are no duplicate times (JAF)
-dataset_SP_All$dt[duplicated(dataset_SP_All$dt)] 
-# Inputs for AdeHabitatLT Resicretization Function
-xy <- coordinates(dataset_SP_All)
-id <- dataset_SP_All$name
-# da <- dataset_SP_All$dt 
-# burstAll <- dataset_SP_All$namePeriod
-
-# This may be a solution to be able to create polygons below. Left off here from working with JAF.
-# xy <- dataset[,c(4,3)]
-# spdf <- SpatialPointsDataFrame(coords = xy, data = dataset, proj4string = CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
-
-
-# MCPs from adehabitatHR
-jr_hr_mcp <- mcp.area(dataset_SP_All[,6], percent=c(50,95), unout=c("km2"), plot=F)
-mcpFULL <- mcp.area(dataset_SP_All[,6], percent=100, unout=c("km2"), plot=F)
-mcpFULL <- as.data.frame(t(mcpFULL))
-mcpFULL$season <- c("Summer","Summer","Summer","Winter","Summer", "Winter","Winter","Winter","Winter","Summer","Summer","Summer")
-colnames(mcpFULL) <- c("mcp","season")
-mmcpFULL <- mean(mcpFULL$mcp[mcpFULL$season=="Summer"])
-
-# write_csv(jr_hr_mcp)
-
-# create the utilization distribution
-jr_hr_kde_UD <- kernelUD(dataset_SP_All[,6], h="href", grid=500, same4all=TRUE)
-image(jr_hr_kde_UD)
-
-
-# get our core and HR estimates based on the UD
-jr_hr_kde <- kernel.area(jr_hr_kde_UD, percent=c(50, 95), unout=c("km2"))
-
-kde <- as.data.frame(t(jr_hr_kde))
-colnames(kde) <- c("kdef","kdenf")
-kde$season <- c("Summer","Summer","Summer","Winter","Summer", "Winter","Winter","Winter","Winter","Summer","Summer","Summer")
-mkdeSU95 <- mean(kde$kdenf[kde$season=="Summer"])
-sdkdeSU95 <- sd(kde$kdenf[kde$season=="Summer"])
-mkdeSU50 <- mean(kde$kdef[kde$season=="Summer"])
-sdkdeSU50 <- sd(kde$kdef[kde$season=="Summer"])
-mkdeWI95 <- mean(kde$kdenf[kde$season=="Winter"])
-sdkdeWI95 <- sd(kde$kdenf[kde$season=="Winter"])
-mkdeWI50 <- mean(kde$kdef[kde$season=="Winter"])
-sdkdeSWI50 <- sd(kde$kdef[kde$season=="Winter"])
-
-test <- kernelUD(dataset_SP_All[,6], h="href", grid=1000, same4all=TRUE)
-kdeFULL <- kernel.area(test, percent=100, unout=c("km2"))
-
-
-# create our polygon of the HR
-hr_kde_poly <- getverticeshr(jr_hr_kde_UD, percent=95)
-hr_kde_latlong <- spTransform(hr_kde_poly, CRS("+proj=utm +zone=20 +ellps=WGS84 +south +units=m"))
-
-# compare mcp and kde estimates
-hr <- data.frame(jr_hr_mcp,jr_hr_kde)
-
-write.csv(hr, file="HR.csv", row.names = FALSE)
-
-```
-

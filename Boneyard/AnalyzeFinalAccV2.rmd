@@ -1,0 +1,400 @@
+---
+title: "Analyze Rediscritized Acceleration Data"
+author: "Katie Harrington"
+date: "January 9, 2019"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float:
+     collapsed: false
+     smooth_scroll: false
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Get Started
+*This script takes a CSV file with regularly sampled, calibrated acceleration data.
+
+## Load libraries; set working directory and local time zone offset
+```{r}
+#Libraries utilized
+library(tidyverse)
+library(dplyr)
+library(zoo)
+library(tagtools)
+library(lubridate)
+library(plotly)
+library(ggplot2)
+library(RcppRoll)
+library(car)
+library(gridExtra)
+library(signal)
+
+setwd("~/Projects/R/TWlogger")
+tzOffset <-"Etc/GMT+3"
+```
+
+# Prep Data
+## Import Data: Option 1
+*Use this import option for original 50-Hz data. 
+*Includes downsampling script.
+```{r DataImport, warning=FALSE, message=FALSE, collapse = TRUE}
+# Select file to import
+filename <- file.choose()
+# Import original 50-Hz data
+data <- read_csv(filename, 
+                 col_types = cols(
+                   #dttz = col_datetime(),
+                   #dt = col_datetime(),
+                   temp = col_double(), # Only comment this out for 2017/2019 tags
+                   Ax = col_double(),
+                   Ay = col_double(),
+                   Az = col_double(),
+                   Mx = col_double(),
+                   My = col_double(),
+                   Mz = col_double(),
+                   # freq = col_double(), # Comment this out for 2017/2019 tags
+                   secs_since = col_double()))
+
+# Create deployment ID
+depid <- basename(filename)
+depid <- strsplit(depid,'-')
+depid <- depid[[1]][1]
+depid
+
+# Confirm correct dttz, since it has not been retaining time zone when writing to CSV 
+attr(data$dttz, "tzone") # Check tz
+# Fix Option 1
+# attr(data$dttz, "tzone") <- tzOffset # Use this to change from UTC to proper local time (time will change)
+# Fix Option 2
+data$dttz <- force_tz(data$dttz,tzone=tzOffset) # If time is correct and tz is wrong, force the tz (time will NOT change)
+attr(data$dttz, "tzone") # Check tz
+
+# Subset to only include time and acc data
+data2 <- data[,c("dttz","true_since","Ax","Ay","Az")]
+
+# Down sample data (decimate each vector separately)
+df <- 50 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# For datetime select every nth value
+dttz <- data2$dttz
+a <- dttz
+dttz_down <- a[seq(1, length(a), df)]
+
+# For true_since select every nth value
+true_since <- data2$true_since
+a <- true_since
+true_since_down <- a[seq(1, length(a), df)]
+
+# Create individual vectors from acc fields
+Ax <- data2$Ax
+Ay <- data2$Ay
+Az <- data2$Az
+
+# Convert vectors to numeric matrix
+Ax_mat <- matrix(Ax,ncol=1)
+Ay_mat <- matrix(Ay,ncol=1)
+Az_mat <- matrix(Az,ncol=1)
+
+# Use decimate function
+n <- 12*5
+Ax_down <- decimate(Ax_mat,5,n=n,ftype="fir")
+Ay_down <- decimate(Ay_mat,5,n=n,ftype="fir")
+Az_down <- decimate(Az_mat,5,n=n,ftype="fir")
+
+n <-12*10
+Ax_down <- decimate(Ax_down,10,n=n,ftype="fir")
+Ay_down <- decimate(Ay_down,10,n=n,ftype="fir")
+Az_down <- decimate(Az_down,10,n=n,ftype="fir")
+
+# Combine down sampled data into one dataframe
+data2_down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
+data2 <- data2_down
+
+# Create Bird ID after downsampling
+depid2 <- strsplit(depid,'_')
+depid2[[1]][3]
+data2$ID <- depid2[[1]][3]
+
+# Change column names to more practical shorter names
+colnames(data2)[1:6] <- c("dttz","true_since","Ax","Ay","Az","ID")
+# Reorder columns
+data2 <- data2[,c("ID","dttz","true_since","Ax","Ay","Az")]
+
+# Very important to run this line to reset sampling rate to down sampled rate
+fs = fs/df
+
+# Preserve original import data (data) and downsampled data (data2)
+datax <- data2
+
+# NOTE: Datax includes only down sampled acceleration data (IT HAS NOT BEEN SUBSET TO 24-hr)
+# NOTE: Skip below Import Option 2 to subset and calculate metrics
+```
+
+
+## Import Data: Option 2
+*Use this option to import previously down sampled 1-Hz data.
+*Confirm this data already includes Bird ID and metrics.
+```{r}
+# Select file to import
+filename <- file.choose()
+# Import down sampled data
+data <- read_csv(filename,
+                 col_types = cols(
+                   dttz = col_datetime(),
+                   true_since = col_double(),
+                   Ax = col_double(),
+                   Ay = col_double(),
+                   Az = col_double()))
+
+# Create deployment ID
+depid <- basename(filename)
+depid <- strsplit(depid,'-')
+depid <- depid[[1]][1]
+depid
+
+# Confirm correct dttz, since it has not been retaining time zone when writing to CSV 
+attr(data$dttz, "tzone") # Check tz
+# Fix Option 1
+attr(data$dttz, "tzone") <- tzOffset # Use this to change from UTC to proper local time (time will change)
+# Fix Option 2
+data$dttz <- force_tz(data$dttz,tzone=tzOffset) # If time is correct and tz is wrong, force the tz (time will NOT change)
+attr(data$dttz, "tzone") # Check tz
+
+# Change column names to more practical shorter names
+colnames(data)[1:9] <- c("ID","dttz","true_since","Ax","Ay","Az","Amag","Amag_rollmean","odba")
+
+# Set sampling rate
+# Need to write code so this calculates automatically, but haven't yet
+fs = 1
+
+# Preserve original import data (data)
+datax <- data
+
+# Datax includes down sampled acceleration data and metrics (IT HAS NOT BEEN SUBSET TO 24-hr)
+```
+
+## Subset data to timerange of interest
+*Import Option 2 is already subset to 24-hr.
+```{r}
+# Confirm length of datax in hours
+length(datax$dttz)/60/60
+
+# If necessary, subset data
+startTime <- as.POSIXct(strptime("2019-02-21 16:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2019-02-22 16:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+# Extract data for the selected timerange
+datax <- subset(datax, datax$dttz >= startTime & datax$dttz <= endTime)
+```
+
+# Process Data
+## Calculate Metrics
+*Import Option 2 may already include metrics.
+```{r metrics, echo=FALSE}
+# Confirm sampling rate
+fs
+sw <- fs # Sets sampling window to be equal sampling rate
+
+# Magnitude of acceleration
+Amag <- sqrt(datax$Ax^2 + datax$Ay^2 + datax$Az^2)
+datax$Amag <-Amag
+
+# Check values
+max(datax$Amag)
+mean(datax$Amag)
+min(datax$Amag)
+
+# Running mean of magnitude of acceleration
+# for 1Hz data, a 10 second window (+5, -5), window size is n+1 (this assumes an even windowSize)
+windowSize = 11 
+Amag_rollmean <- roll_mean(datax$Amag,n=windowSize,fill=NA)
+head(Amag_rollmean) # this gives (n-1)/2 NA's at the front
+tail(Amag_rollmean) # and (n-1)/2 NA's at the end
+# replace the NA's at the beginning with the first good value
+Amag_rollmean[seq(1,(windowSize-1)/2)] <- Amag_rollmean[(windowSize-1)/2+1] # (windowSize-1)/2+1 is the first good value
+# replace the NA's at the end with the last good value
+Amag_rollmean[seq(length(Amag_rollmean)-(windowSize-1)/2+1,length(Amag_rollmean))] <- Amag_rollmean[length(Amag_rollmean)-(windowSize-1)/2]
+datax$Amag_rollmean <- Amag_rollmean
+
+# Check values
+max(datax$Amag_rollmean)
+mean(datax$Amag_rollmean)
+min(datax$Amag_rollmean)
+
+# Create matrix of acceleration data
+A <- cbind(datax$Ax,datax$Ay,datax$Az)
+
+# Calculate ODBA (Need to read about Wilson method, filter pass, and n)
+A <- cbind(datax$Ax,datax$Ay,datax$Az)
+datax$odba <- odba(A, sampling_rate = fs,method="wilson",n = sw) # n is sampling window, e.g. 50=1s
+# Simple plot
+# ba <- list(odba = odba)
+# plott(ba, fs=fs) # NOTE: Change if different sampling rate
+
+# Calculate jerk (sqrt of sum of squares of each axis)
+datax$jerk <-njerk(A,sampling_rate=fs)
+# Simple plot
+# jlist <-list(jerk = jerk)
+# plott(jlist,fs=fs)
+
+# Check for NAs
+sapply(datax, function(x) sum(is.na(x)))
+# str(datax)
+
+##########################################
+####      Intellectual Excercise     #####
+##########################################
+# # Try to understand how Amag_rollmean relates to jerk
+# same <- data$Amag_rollmean-data$jerk # How similar are the values? 
+# slist <-list(same)
+# plott(slist,1)
+# # How do the means compare?
+# Amag_m <- mean(data$Amag_rollmean)
+# Amag_m
+# jerk_m <-mean(data$jerk)
+# jerk_m
+# Amag_diff <-diff(data$Amag_rollmean) 
+# Amag_diff_m <-mean(Amag_diff)
+# Amag_diff_m
+
+##########################################
+####  Calculate Additional Metrics   #####
+##########################################
+
+# # Pitch and roll (NOTE: calculates in radians)
+# pr <- a2pr(A,fs)
+# #prlist <-list(pitch=pr$p,roll=pr$r)
+# #plott(prlist,fs=fs)
+# p <- pr$p
+# r <-pr$r
+# 
+# # MSA (minimum specific acceleration)
+# msa <-msa(A)
+# #msalist <- list(msa = msa)
+# #plott(msalist,fs=fs)
+# 
+# # Norm
+# normAcc <- norm2(A)
+# # normlist <- list(normAcc = normAcc)
+# # plott(normlist,fs=fs)
+# 
+# # Running means and variances for each axis
+# # fill=NA replaces missing values created by moving window (e.g.first 24 and last 25 rows are empty)
+# # n is window size
+# mheave <-roll_mean(data2$Az, n=sw, fill=NA)
+# mheave[seq(1,24)] <- mheave[25]
+# mheave[seq(length(mheave)-24,length(mheave))] <- mheave[length(mheave)-25]
+# 
+# varheave <-roll_var(data2$Az, n=sw, fill=NA)
+# varheave[seq(1,24)] <- varheave[25]
+# varheave[seq(length(varheave)-24,length(varheave))] <- varheave[length(varheave)-25]
+# 
+# msurge <-roll_mean(data2$Ax, n=sw, fill=NA)
+# msurge[seq(1,24)] <- msurge[25]
+# msurge[seq(length(msurge)-24,length(msurge))] <- msurge[length(msurge)-25]
+# 
+# varsurge <- roll_var(data2$Ax, n=sw, fill=NA)
+# varsurge[seq(1,24)] <- varsurge[25]
+# varsurge[seq(length(varsurge)-24,length(varsurge))] <- varsurge[length(varsurge)-25]
+# 
+# msway <- roll_mean(data2$Ay, n=sw, fill=NA)
+# msway[seq(1,24)] <- msway[25]
+# msway[seq(length(msway)-24,length(msway))] <- msway[length(msway)-25]
+# 
+# varsway <- roll_var(data2$Ay, n=sw, fill=NA)
+# varsway[seq(1,24)] <- varsway[25]
+# varsway[seq(length(varsway)-24,length(varsway))] <- varsway[length(varsway)-25]
+```
+
+## Plot Data
+*Plots include: (1) full 24-hr acceleration data, (2) 30-min subsets of acceleration data, (3) and full 24-hr individual metrics.
+```{r}
+# Run this to create stacked plots 
+# grid.arrange(p1, p2, p3, nrow=3)
+
+# Plot acc
+p1<- datax %>%
+  gather(axis, acc, Ax:Az) %>%
+  ggplot(aes(dttz, acc, color = axis)) +
+  theme(legend.position="top") +
+  geom_line() +
+  theme_classic() +
+  labs(x = "Time", y = "Acceleration")
+p1
+
+# Plot Amag
+p2 <- datax %>%
+  ggplot(aes(dttz, y = Amag_rollmean),color = 'black') +
+  geom_line() +
+  theme_classic() +
+  labs(x = "Time", y = "Magnitude of acceleration")
+p2
+
+# Plot Amag_rollmean
+p3 <- datax %>%
+  ggplot(aes(x = dttz, y = Amag_rollmean),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "Running mean of magnitude of acceleration")
+p3
+
+# Plot ODBA
+p4 <- datax %>%
+  ggplot(aes(x = dttz, y = odba),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "ODBA")
+p4
+
+# Plot jerk
+p5<- datax %>%
+  ggplot(aes(x = dttz, y = jerk),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "Jerk")
+p5
+
+# Plot successive subsets of data and save to file
+chunkLength <- 30 # Set length (in minutes) of chunks to plot
+# i = 1 # Can set number of plots to print and run for loop from test to p
+for(i in 1:ceiling(nrow(datax)/(chunkLength *60*50))) {
+  test <- datax[seq(((i-1)*chunkLength*50*60)+1,i*chunkLength*50*60),]
+  p <- test %>%
+    gather(axis, acc, Ax:Az) %>%
+    ggplot(aes(dttz, acc, color = axis)) +
+    geom_line() +
+    theme_classic() +
+    labs(x = "Time", y = "Acceleration") +
+    ggtitle(depid)
+  p
+  # save plots as .png
+  ggsave(p, file=paste(depid,'-',i, ".png", sep=''), scale=2)
+}
+
+## Plot individual metrics and axes
+## Select metric or axis to plot (do this by uncommenting selection)
+# z <- msa
+# z <- norm
+# z <- mheave
+# z <- msurge
+# z <- mway
+# z <- varheave
+# z <- varsurge
+# z <- varsway
+# varlist <- list(z = z)
+# plott(varlist,fs=fs)
+
+## Plot multiple metrics
+# multiple <- list(jerk = jerk,odba = odba,msa = msa)
+# plott(multiple,fs=fs)
+```
+
+## Write to CSV
+```{r}
+# Remove unwanted columns
+datax <- subset(datax, select = -c(Ax,Ay,Az,Amag,odba,jerk))
+write_csv(datax, file.path(dirname(filename), paste(depid,"-",fs,"Hz-short.csv",sep="")))
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
