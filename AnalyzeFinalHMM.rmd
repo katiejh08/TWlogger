@@ -59,7 +59,6 @@ This imports and combines data frames to produce data_states.Rdata. Only need to
 ##### Import Part 1: HMM states
 This imports data with HMM states and runs SunriseSunsetTimes.r.
 
-
 ```{r DataImport,warning=FALSE,results="hide",message=FALSE}
 # Load R workspace
 load("data_with_states.RData")
@@ -90,6 +89,7 @@ data[which(data$yday >= 355 | data$yday <= 79),]$season <- 'Summer'
 data$season <- as.factor(data$season)
 unique(data$season)
 
+# Pick up here
 # Rename data
 data_states <-data
 rm(data)
@@ -173,7 +173,7 @@ data_states$duskT <- hour(data_states$dusk) + second(data_states$dusk)/60
 # Check for NAs
 sapply(data_states, function(x) sum(is.na(x)))
 
-# save(data_states,file="data_states.RData")
+save(data_states,file="data_states.RData")
 ```
 
 ### Analyze Data
@@ -1118,7 +1118,6 @@ ggsave(stateODBA, file="ODBA as a function of state and bout length_v3.png",widt
 Calculate daily distance traveled by season. Step length might capture error because of 2-min duty cycle. Can subsample again so we're not affected by accuracy of location. Once I've calculated daily travel distance, I can compare to results of seasonal activity levels. 
 
 
-
 ```{r GPSstates, warning=FALSE}
 # See Analyze TWLoggerGPS script
 load("GPS_states.RData")
@@ -1184,65 +1183,3 @@ ggsave(sprintf("%s_Map.png",deploymentName), plot = last_plot(), device = "png",
   
 ```
 
-### Unused Scripts
-
-
-#### Calculate seasonal mean daylength and nightlength
-This needs work.
-
-```{r}
-# KJH: Need to convert data_states$dawnT and duskT to as.POSIXct
-# Calculate mean dawn and dusk per season
-mDawnDusk <- data_states %>% 
-  summarize(meanDawnSU=as.Posixct(mean(unique(data_states$dawnT[data_states$season == "Summer"])),
-            meanDuskSU=mean(unique(data_states$duskT[data_states$season == "Summer"])),
-            meanDawnWI=mean(unique(data_states$dawnT[data_states$season == "Winter"])),
-            meanDuskWI=mean(unique(data_states$duskT[data_states$season == "Winter"]))))
-              
-
-```
-
-#### Plot daytime duration states 3 and 4 by season
-```{r highDurdiff, warning=FALSE}
-# Plot daytime absolute state durations
-PdayDur34 <- stateSummaryIND2period %>%
-  group_by(ID,season,dayNight) %>% 
-  filter(dayNight == "day",
-         state_classif == "3" | state_classif == "4") %>% #Alternative filter code: state_classif %in% c(3,4)
-  ggplot() +
-  geom_boxplot(aes(x=state_classif,y=stateCountMin, color = season)) +
-  scale_color_discrete(name = "Season") +
-  # scale_y_continuous(breaks = seq(0, 280, by = 10)) +
-  scale_x_discrete(labels = c("Low Activity","High Activity")) +
-  labs(x="State",
-       y = "Duration (min)",
-       title = "Seasonal differences in daytime amount of activity") + 
-  theme_classic(base_size = 13) + 
-  theme(plot.title = element_text(size=14)) +
-  theme(axis.text = element_text(size = 14, color = "black"),
-        axis.title.x = element_text(color="black", size=14),
-        axis.title.y = element_text(color="black", size=14))
-PdayDur34
-# Save a file at 300 ppi
-# ggsave(PdayDur34, file="Seasonal daytime absolute state durations for states 3 and 4.png",width=12, height=8, dpi=300)
-
-```
-
-#### State Durations per Individual (Night)
-```{r}
-PodbaNight <- stateODBA %>% 
-  group_by(season,ID,dayNight) %>%
-  summarize(odbaSum = sum(odba)) %>%
-  ggplot() +
-  geom_boxplot(aes(x = dayNight, y = odbaSum, 
-                   color = season)) +
-  labs(x="State",
-       y = "Duration (hr)",
-       title = "State Durations per Individual (Night)") + 
-  theme_classic(base_size = 13) + 
-  theme(plot.title = element_text(size=14)) +
-  theme(axis.text = element_text(size = 14, color = "black"),
-        axis.title.x = element_text(color="black", size=14),
-        axis.title.y = element_text(color="black", size=14))
-PodbaNight
-```
