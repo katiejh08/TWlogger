@@ -1,0 +1,1602 @@
+---
+title: "Striated Caracara"
+subtitle: "ODBA and Activity Budget Analysis"
+author: "Katie Harrington"
+date: "April 19, 2019"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float:
+     collapsed: false
+     smooth_scroll: false
+    df_print: paged
+---
+##
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Set up environment
+This loads libraries, sets working directory, and creates local time zone offset.
+
+```{r Libraries,echo=FALSE,results="hide",warning=FALSE,collapse=TRUE}
+
+library(tidyverse)
+library(dplyr)
+library(maptools) # to calculate solarpos
+library(stringr)
+library(lubridate)
+library(adehabitatLT)
+library(geosphere)
+library(ggpubr)
+library(sp)
+library(rgdal)
+library(tibble)
+library("rnaturalearth")
+library("rnaturalearthdata")
+library("sf")
+library("ggspatial")
+library(marmap)
+library(mapdata)
+library(metR)
+library(RcppRoll)
+library(plotrix)
+library(ggplot2)
+library(ggmap)
+library(maps)
+
+# setwd("~/Projects/R/TWlogger")
+tzOffset <-"Etc/GMT+3"
+```
+
+### Prep Data
+This imports and combines data frames to produce data_states_one_model.Rdata. Only need to run this section once, unless needing to recreate data_states_one_model.Rdata.   
+
+This imports data with HMM states and runs SunriseSunsetTimes.r.
+```{r DataImport,warning=FALSE,results="hide",message=FALSE}
+# Load R workspace
+load("data_with_states_one_model.RData")
+# Combine list into one dataframe
+data <-bind_rows(data_with_states)
+rm(data_with_states)
+# Create Spatial Points
+data$long <- -60.09
+data$lat <- -51.37
+
+# Check dttz 
+attr(data$dttz, "tzone") #Check tz
+attr(data$dttz, "tzone") <- tzOffset
+
+data$date <- as.Date(data$dttz, tz = tzOffset)
+
+# Run the sunrise sunset script
+source('SunriseSunsetTimes.r')
+# Check for NAs
+sapply(data, function(x) sum(is.na(x)))
+# Determine Season (calculated from 2018 solstices and equinoxes)
+data$yday <- yday(data$dttz)
+data$season <- rep('NA')
+#data[which(data$yday > 79 & data$yday <= 173),]$season <- 'Fall'
+data[which(data$yday > 173 & data$yday <= 265),]$season <- 'Winter'
+#data[which(data$yday > 265 & data$yday < 355),]$season <- 'Spring'
+data[which(data$yday >= 355 | data$yday <= 79),]$season <- 'Summer'
+data$season <- as.factor(data$season)
+unique(data$season)
+
+# Pick up here
+# Rename data
+data_states_one_model <-data
+rm(data)
+
+```
+
+This creates one file that includes states and raw acc. Saves as data_states_one_model.Rdata.
+```{r Combine,warning=FALSE,results="hide",message=FALSE}
+# load Final Metrics from AnalyzeFinalAccV1
+load("~/Projects/R/TWlogger/FinalMetrics.RData")
+# Add acc data to stateData
+data_states_one_model <- left_join(data_states_one_model,dplyr::select(data,ID,dttz,Ax,Ay,Az), by = c("ID","dttz"))
+rm(data)
+# Consolidate astronomical periods two periods (day and night)
+data_states_one_model <- data_states_one_model %>% 
+  group_by(season, ID) %>% 
+  mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"day","night")) %>%
+  ungroup
+# Check for NAs
+sapply(data_states_one_model, function(x) sum(is.na(x)))
+
+# Create SolarMidnight based hourly bins
+data_states_one_model$solarMidnight <- hms::as.hms((data_states_one_model$solarnoon- dhours(12)),tz = tzOffset)
+data_states_one_model$time <- hms::as.hms(data_states_one_model$dttz,tz = tzOffset)
+data_states_one_model$timeBin <- floor(as.numeric(difftime(data_states_one_model$time, data_states_one_model$solarMidnight,units = "hours")))
+data_states_one_model$timeBin <- ifelse(data_states_one_model$timeBin < 0,data_states_one_model$timeBin+24,data_states_one_model$timeBin)
+data_states_one_model$hr <- hour(data_states_one_model$dttz)
+data_states_one_model$night <- NULL
+data_states_one_model$state <-ifelse(data_states_one_model$state_classif==1|data_states_one_model$state_classif==2,"Rest","Active")
+data_states_one_model$yr <- year(data_states_one_model$dttz)
+data_states_one_model$dawnT <- (hour(data_states_one_model$dawn) + minute(data_states_one_model$dawn)/60) - (hour(data_states_one_model$solarMidnight) + minute(data_states_one_model$solarMidnight)/60)
+data_states_one_model$duskT <- hour(data_states_one_model$dusk) + minute(data_states_one_model$dusk)/60 - (hour(data_states_one_model$solarMidnight) + minute(data_states_one_model$solarMidnight)/60)
+# Check for NAs
+sapply(data_states_one_model, function(x) sum(is.na(x)))
+
+save(data_states_one_model,file="data_states_one_model.RData")
+```
+
+### Analyze Data
+Begin here. This loads data_states_one_model.Rdata and creates primary dataframes.
+
+This file contains ODBA values and states.
+```{r Load, echo=FALSE,warnings=FALSE}
+load("data_states_one_model.RData")
+
+```
+
+This calculate 4-state counts and proportions by astronomical period (stateSummaryIND).
+```{r stateSummaryIND, warnings=FALSE}
+# Calculate state count and proportions by 4 periods (dawn, day, dusk, night)
+stateSummaryIND <- data_states_one_model %>% 
+  group_by(season, yr,ID, astronomical) %>% 
+  mutate(periodLength = n()) %>% 
+  ungroup %>% 
+  group_by(season, ID, astronomical, state_classif,periodLength) %>% 
+  summarize(stateCount = n()) %>% 
+  mutate(stateProp = stateCount/periodLength) %>% 
+  ungroup
+
+# Change classes for plotting
+stateSummaryIND$ID <- as.factor(stateSummaryIND$ID)
+stateSummaryIND$astronomical <- as.factor(stateSummaryIND$astronomical)
+
+# Create vectors to retain groupings for plots
+stateSummaryIND$season_per_state <- paste(stateSummaryIND$season,
+                                          stateSummaryIND$astronomical,
+                                          stateSummaryIND$state_classif,sep="_")
+stateSummaryIND$season_period <- paste(stateSummaryIND$season,
+                                          stateSummaryIND$astronomical,sep="_")
+
+```
+
+This calculates 4-state and 2-state counts and proportions by day and night (stateSummaryIND2period, stateSummaryIND2period2state) 
+```{r stateSummaryIND2period, warning=FALSE}
+# 4-state, 2 period
+# Create new dataframe that combines astronomical periods into day and night and calculates 4-state counts and proportions
+stateSummaryIND2period <- data_states_one_model %>% 
+  group_by(season, yr, ID) %>% 
+  mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"day","night")) %>%
+  ungroup %>% 
+  group_by(season, ID, dayNight) %>% 
+  mutate(periodLength = n()) %>%
+  ungroup %>% 
+  group_by(season, yr, ID, dayNight, state_classif,periodLength) %>%
+  summarize(stateCount = n(),
+            odbaGsum = sum(ODBAg)) %>%
+  mutate(stateCountMin = stateCount/60,
+         stateCountHour = stateCount/60/60,
+         stateProp = stateCount/periodLength) %>%
+  ungroup
+
+# Create vectors to retain groupings for plots
+stateSummaryIND2period$ID <- as.factor(stateSummaryIND2period$ID)
+stateSummaryIND2period$dayNight <- as.factor(stateSummaryIND2period$dayNight)
+stateSummaryIND2period$season_per_state <- paste(stateSummaryIND2period$season,
+                                          stateSummaryIND2period$dayNight,
+                                          stateSummaryIND2period$state_classif,sep="_")
+stateSummaryIND2period$season_period <- paste(stateSummaryIND2period$season,
+                                       stateSummaryIND2period$dayNight,sep="_")
+stateSummaryIND2period$state_classif <- as.factor(stateSummaryIND2period$state_classif)
+
+# 2-state, 2 period
+# Create new dataframe that combines active and rest states and calculates 2-state count and proportions
+stateSummaryIND2period2state <- stateSummaryIND2period %>% 
+  group_by(season,yr,ID,dayNight,state_classif) %>%
+  mutate(state = ifelse(state_classif %in% c("1","2"),"rest","active")) %>%
+  ungroup %>% 
+  group_by(season, yr,ID, dayNight,state,periodLength) %>% 
+  summarize(stateCount2state = sum(stateCount),
+            odbaGsum = sum(odbaGsum)) %>% 
+  mutate(stateCountMin = stateCount2state/60,
+         stateCountHour = stateCount2state/60/60,
+         stateProp = stateCount2state/periodLength) %>% 
+  ungroup
+
+```
+
+This creates dataframe with mean proportion of time spent resting per period by season to justify excluding night from analysis.
+```{r restPropSU, warning=FALSE}
+# Calculate mean proportion of time spent resting per period by season
+restPropSU <- stateSummaryIND2period2state %>% 
+  group_by(season,dayNight,state) %>% 
+  summarize(stateProp = mean(stateProp))
+restPropSU
+```
+
+This plots night duration and proportion of time spent active or resting by season.
+```{r PnightDur, warning=FALSE}
+# Night state durations
+PnightDur <- stateSummaryIND2period2state %>% #View
+  group_by(season,dayNight) %>% 
+  filter(dayNight == "night") %>%
+  ggplot() +
+  geom_boxplot(aes(x = state, y = stateCountHour,color = season)) +
+  scale_color_discrete(name = "Season") +
+  scale_y_continuous(breaks = seq(0, 24, by = 2)) +
+  labs(x="State",
+       y = "Duration (hr)",
+       title = "Seasonal nighttime state absolute durations") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+
+# Night state proportions
+PnightProp <- stateSummaryIND2period2state %>% 
+  group_by(season,dayNight) %>% 
+  filter(dayNight == "night") %>% 
+  ggplot() +
+  geom_boxplot(aes(x = state, y = stateProp, color = season)) +
+  ylim(0,1) +
+  labs(x="State",
+       y = "Proportion (%)",
+       title = "Seasonal nighttime state proportions") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+
+```
+
+###Q1: Is there a seasonal difference in 24-hr ODBA?
+
+This creates dataframe of 24-hr ODBA (gravitational g) per individual (sumODBA, sumODBASU and sumODBAWI).
+```{r sumODBA, warning=FALSE}
+# Calculate 24-h ODBA (gravitational g) per ID
+sumODBA <- data_states_one_model %>% 
+  group_by(yr,season,ID) %>%
+  summarize(sumODBA = sum(ODBAg,na.rm = TRUE))
+
+# Summer
+sumODBASU <- sumODBA %>% 
+  group_by(ID,season,yr) %>%
+  filter(season == "Summer") 
+
+# Winter
+sumODBAWI <- sumODBA %>% 
+  group_by(ID,season,yr) %>%
+  filter(season == "Winter") 
+
+```
+
+This plots 24-h ODBA (boxplot) by season.
+```{r}
+pSumODBA <-sumODBA %>%
+  ggplot() +
+  geom_boxplot(aes(x=season,y=sumODBA,color=season)) +
+  scale_color_discrete(name = "Season") +
+  scale_y_continuous(breaks = seq(0, 4500, by = 500)) +
+  labs(x=NULL,
+       y = "ODBA (gravitational g)") + 
+  theme_classic(base_size = 13) + 
+  theme(legend.position = "none")
+# ggsave(pSumODBA, file="Seasonal 24-h ODBA total.png",dpi=300)
+```
+
+OLD: This confirms no tag versioning effects (tests for differences across years).
+```{r pool, warning=FALSE}
+sumODBA$yr <-as.factor(sumODBA$yr)
+sumODBA$version <-ifelse(sumODBA$yr==2017,"1","2")
+
+# Plot density distributions
+d <- density(sumODBA$sumODBA-mean(sumODBA$sumODBA))
+plot(d)
+# dSU <- density(sumODBASU$sumODBA-mean(sumODBASU$sumODBA))
+# plot(dSU)
+# dWI <- density(sumODBAWI$sumODBA-mean(sumODBAWI$sumODBA))
+# plot(dWI)
+# rm(dSU,dWI)
+
+# Test for normality
+shapiro.test(sumODBA$sumODBA) #Results:W = 0.97355, p-value = 0.7543
+# shapiro.test(sumODBASU$sumODBA)
+# shapiro.test(sumODBAWI$sumODBA)
+
+# Test for equal variances
+var.test(sumODBA ~ version,data=sumODBA) #Results: F = 1.2188, num df = 10, denom df = 12, p-value = 0.7349
+
+# Test for differences within each season by year to confirm pooling
+t.test(sumODBA ~ version, data=sumODBA,var.equal = TRUE) #Results: t = 1.2414, df = 22, p-value = 0.2275
+sd(sumODBA$sumODBA[sumODBA$version=="1"])
+sd(sumODBA$sumODBA[sumODBA$version=="2"])
+```
+
+OLD: This is an alternative test for tag versioning effects. Uses K-S test to see if seasonal raw value distributions were pulled from same distribution.
+```{r}
+w <- data_states_one_model %>% 
+  filter(yr=="2017",
+         season=="Winter") %>% 
+  .$ODBAg
+
+x <- data_states_one_model %>% 
+  filter(yr=="2017",
+         season=="Summer") %>% 
+  .$ODBAg
+
+y <- data_states_one_model %>% 
+  filter(yr=="2018",
+         season=="Winter") %>% 
+  .$ODBAg
+z <- data_states_one_model %>% 
+  filter(yr=="2019",
+         season=="Summer") %>% 
+  .$ODBAg
+
+ks.test(w,y)
+# x <- data_states_one_model$ODBAg[data_states_one_model$version=="1"]
+# y <- data_states_one_model$ODBAg[data_states_one_model$version=="2"]
+```
+
+OLD: This tests for seasonal differences in 24-h ODBA (gravitational g) using 2-sample t-tests.
+```{r ttestODBAdiff, warning=FALSE}
+# Test for normality
+shapiro.test(sumODBA$sumODBA) #Results: p-value = 0.7543
+# shapiro.test(sumODBASU$sumODBA)
+# shapiro.test(sumODBAWI$sumODBA)
+
+# Test for equal variances
+var.test(sumODBA ~ season,data=sumODBA) #Variance is equal. Results: p-value = 0.3646
+
+# Test for seasonal differences
+test <- t.test(sumODBA ~ season,data=sumODBA,var.equal = TRUE)
+test
+
+sd(sumODBASU$sumODBA)
+sd(sumODBAWI$sumODBA)
+
+```
+
+OLD: This tests for seasonal differences in 24-h ODBA (gravitational g) using 2-way ANOVA.
+```{r glmODBAdiff}
+shapiro.test(sumODBA$sumODBA)
+var.test(sumODBA ~ season,data=sumODBA)
+str(sumODBA)
+sumODBA$yr <- as.factor(sumODBA$yr)
+a1 <- lm(sumODBA~season*yr, data=sumODBA)
+anova(a1)
+```
+
+This tests for seasonal differences in 24-h ODBA (gravitational g) using a randomized block ANOVA.
+```{r}
+shapiro.test(sumODBA$sumODBA)
+var.test(sumODBA ~ season,data=sumODBA)
+a2 <- lm(sumODBA~season+yr, data=sumODBA)
+anova(a2)
+a3 <- aov(sumODBA~season+yr, data=sumODBA)
+summary(a3)
+TukeyHSD(a3)
+```
+
+This plots hourly ODBA by season. Creates snake swallowed elephant plot.
+```{r ODBAplot, warning=FALSE}
+# Meanline summer
+meanlineSU <- data_states_one_model %>%
+  filter(season == "Summer") %>%
+  group_by(ID, timeBin) %>%
+  summarize(odbaGSum = sum(ODBAg,na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(timeBin) %>% 
+  summarize(meanODBA = mean(odbaGSum))
+# Meanline winter
+meanlineWI <- data_states_one_model %>%
+  filter(season == "Winter") %>% #View
+  group_by(ID, timeBin) %>%
+  summarize(odbaGSum = sum(ODBAg,na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(timeBin) %>% 
+  summarize(meanODBA = mean(odbaGSum))
+
+# Calculate time of mean dawn and dusk and create dataframes to use for shading bins in total daily ODBA plot
+shadeSU = data.frame(x1=c(0,mean(unique(data_states_one_model$duskT[data_states_one_model$season == "Summer"]))),
+                     x2=c(mean(unique(data_states_one_model$dawnT[data_states_one_model$season == "Summer"])),23),
+                     y1=c(0,0),
+                     y2=c(800,800))
+shadeWI = data.frame(x1=c(0,mean(unique(data_states_one_model$duskT[data_states_one_model$season == "Winter"]))),
+                     x2=c(mean(unique(data_states_one_model$dawnT[data_states_one_model$season == "Winter"])),23),
+                     y1=c(0,0),
+                     y2=c(800,800))
+
+# Summer total ODBA per solar hour
+PodbaSum24SU <- data_states_one_model %>%
+  filter(season == "Summer") %>% #View
+  group_by(ID, timeBin,dayNight) %>%
+  summarize(odbaGSum = sum(ODBAg,na.rm = TRUE)) %>% 
+  ggplot() +
+  geom_line(aes(x=timeBin, y=odbaGSum, group=ID),alpha=0.7) +
+  geom_line(data=meanlineSU,aes(x=timeBin, y=meanODBA),color="black",size=1.5) +
+  scale_y_continuous(breaks = seq(0,800, by = 200), expand = c(0, 0)) +
+  scale_x_continuous(breaks = seq(0,23, by = 1),expand = c(0, 0)) +
+  labs(x="Solar Hour",
+       y = NULL) + 
+  geom_rect(data=shadeSU, mapping=aes(xmin=x1, xmax=x2, ymin=y1, ymax=y2), color='grey', alpha=0.5) +
+  annotate("text", x = 0.75, y = 740, label = "B. Summer", color="white", hjust = 0) +
+  theme_classic(base_size = 13)
+PodbaSum24SU
+
+# Winter total ODBA per solar hour
+PodbaSum24WI <- data_states_one_model %>%
+  filter(season == "Winter") %>% #View
+  group_by(ID, timeBin) %>%
+  summarize(odbaGSum = sum(ODBAg,na.rm = TRUE)) %>% 
+  ggplot() +
+  geom_line(aes(x=timeBin, y=odbaGSum, group=ID),alpha=0.7)+
+  geom_line(data=meanlineWI,aes(x=timeBin, y=meanODBA),color="black",size=1.5) +
+  scale_y_continuous(breaks = seq(0,800, by = 200), expand = c(0, 0)) +
+  scale_x_continuous(breaks = seq(0,23, by = 1),expand = c(0, 0)) +
+  labs(x=NULL,
+       y = NULL) + 
+  geom_rect(data=shadeWI, mapping=aes(xmin=x1, xmax=x2, ymin=y1, ymax=y2), color='grey', alpha=0.5) +
+  annotate("text", x = 0.75, y = 740, label = "A. Winter", color="white",hjust = 0) +
+  theme_classic(base_size = 13)
+PodbaSum24WI
+
+Podba24Seas <- ggarrange(PodbaSum24WI,PodbaSum24SU,nrow=2)
+Podba24Seas <- annotate_figure(Podba24Seas,left = text_grob("24-h ODBA (gravitational g)", color = "black", rot = 90))
+
+Podba24Seas
+rm(meanlineSU,meanlineWI,PodbaSum24SU,PodbaSum24WI)
+# Save a file at 300 ppi
+ggsave(Podba24Seas, file="Seasonal total ODBA per solar hour_shaded with label.png",width=12, height=8,dpi=300)
+```
+
+###Q2: Is there a seasonal difference in daytime ODBA?
+
+Calculate daytime total ODBA (g) per season
+
+Create dataframes of ODBA sum by day and night.
+```{r}
+# ODBA sum per period by individual
+odba2periodsum <- data_states_one_model %>%
+  group_by(season,ID,dayNight) %>%
+  summarize(odbaGsum = sum(ODBAg,na.rm = TRUE))
+
+# Daytime ODBA sums
+odba2periodsumD <-odba2periodsum %>% 
+  filter(dayNight=="day")
+
+# Nighttime ODBA sums
+odba2periodsumN <-odba2periodsum %>% 
+  filter(dayNight=="night")
+
+```
+
+This tests for seasonal differences in ODBA sum by day and night.
+```{r}
+# Day
+# Test for normality
+shapiro.test(odba2periodsumD$odbaGsum) #Results: W = 0.97987, p-value = 0.8935
+# Test for equal variances
+var.test(odbaGsum ~ season,data=odba2periodsumD) #Results: F = 0.61622, num df = 11, denom df = 11, p-value = 0.4347
+# Test for seasonal differences
+t.test(odbaGsum ~ season,data=odba2periodsumD,var.equal = TRUE) #Results: t = -2.1971, df = 22, p-value = 0.03884
+
+# Night
+# Test for normality
+shapiro.test(odba2periodsumN$odbaGsum) #Results: W = 0.91704, p-value = 0.05026
+# Test for equal variances
+var.test(odbaGsum ~ season,data=odba2periodsumN) #Results: F = 1.3017, num df = 11, denom df = 11, p-value = 0.6695
+# Test for seasonal differences
+t.test(odbaGsum ~ season,data=odba2periodsumN,var.equal = TRUE) #Results: t = -0.81156, df = 22, p-value = 0.4257
+
+```
+
+This calculates mean and SD of ODBA sum by day and night.
+```{r}
+# Day ODBA sum
+sd(odba2periodsumD$odbaGsum[odba2periodsumD$season=="Summer"])
+sd(odba2periodsumD$odbaGsum[odba2periodsumD$season=="Winter"])
+
+# Night ODBA sum
+mean(odba2periodsumN$odbaGsum[odba2periodsumN$season=="Summer"])
+mean (odba2periodsumN$odbaGsum[odba2periodsumN$season=="Winter"])
+sd(odba2periodsumN$odbaGsum[odba2periodsumN$season=="Summer"])
+sd(odba2periodsumN$odbaGsum[odba2periodsumN$season=="Winter"])
+```
+
+Create dataframe of ODBA rate by day and night.
+```{r}
+# ODBA rate per period by individual
+odba2periodRate <- odba2periodsum %>% 
+  group_by(season,dayNight) %>% 
+  summarize(odbaGrate = mean(odbaGsum))
+```
+
+Create dataframe of daytime hourly ODBA rate.
+```{r}
+# Calculate daytime hourly ODBA rate 
+odbaRated <- data_states_one_model %>%
+  filter(dayNight == "day") %>% 
+  group_by(season,yr,ID) %>% 
+  summarize(odbaGsum = sum(ODBAg,na.rm = TRUE),
+            dayLengthHr = n()/60/60) %>% 
+  mutate(odbaGrate = odbaGsum/dayLengthHr)
+```
+
+This calculates SD of hourly ODBA rate per ID
+```{r}
+var <- odbaRated %>%
+  group_by(season) %>% 
+  summarize(meanRate = mean(odbaGrate),
+            sdRate = sd(odbaGrate)) %>% View
+```
+
+OLD: This tests for seasonal differences in daytime hourly ODBA rate using t-tests.
+```{r ttestODBAdiff,warning=FALSE}
+# Test for normality
+shapiro.test(odbaRated$odbaGrate) #Results: p-value = 0.2224 
+# Test for equal variances
+var.test(odbaGrate ~ season,data=odbaRated) #Results: Variance is unequal p=0.03201
+# Test for seasonal differences
+t.test(odbaGrate ~ season,data=odbaRated,var.equal = FALSE) #Results: t = -6.6881, df = 16.251, p-value = 4.811e-06
+
+```
+
+OLD: This tests for seasonal differences in daytime hourly ODBA rate using 2-way ANOVA.
+```{r}
+shapiro.test(odbaRated$odbaGrate)
+var.test(odbaGrate ~ season,data=odbaRated)
+# Need to test to make sure variance is not more than 3x (calculate SD per ID and check min vs max?)
+str(odbaRated)
+odbaRated$yr <- as.factor(odbaRated$yr)
+b1 <- lm(odbaGrate~season*yr, data=odbaRated)
+anova(b1) 
+```
+
+This tests for seasonal differences in daytime hourly ODBA rate using randomized block ANOVA.
+```{r}
+str(odbaRated)
+shapiro.test(odbaRated$odbaGrate)
+var.test(odbaGrate ~ season,data=odbaRated) #Unequal variance, but not more than 2x different
+b2 <- aov(odbaGrate ~ season+yr, data = odbaRated)
+summary(b2)
+```
+
+Did not use: This creates an interaction plot to determine if interaction is crossing or non-crossing.
+```{r}
+PRateInteract <- odbaRated %>%
+  group_by(season,yr) %>% 
+  summarize(mRate=mean(odbaGrate)) %>% 
+  ggplot() +
+  geom_point(aes(x=yr, y=mRate,color=season))
+PRateInteract
+```
+
+This calculates mean and SD of daytime hourly ODBA rate.
+```{r}
+sd(odbaRated$odbaGrate[odbaRated$season=="Summer"])
+sd(odbaRated$odbaGrate[odbaRated$season=="Winter"])
+
+```
+
+This plots daytime hourly ODBA rate.
+```{r}
+pd <- position_dodge(0.1) # move them .05 to the left and right
+PodbaRated <- odbaRated %>%
+  group_by(season) %>% 
+  summarize(mRate=mean(odbaGrate),
+            seRate=std.error(odbaGrate)) %>%
+  ggplot() +
+  # geom_boxplot(aes(x=season, y=odbaGrate,color=season)) +
+  geom_errorbar(aes(x=season,ymin=mRate-seRate, ymax=mRate+seRate), width=.1,position=pd) +
+  geom_point(aes(x=season,y=mRate,colour=season),position=pd,size=3) +
+  labs(x= "Season",
+       y = "Hourly ODBA (g)",
+       title = "Daytime Hourly ODBA by Season") + 
+  theme_classic(base_size = 13) + 
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PodbaRated
+
+ggsave(PodbaRated, file="Hourly ODBA by season.png",dpi=300)
+
+```
+
+#### Daytime hourly ODBA rate per state
+KJH: This may be redundant?
+
+This creates dataframes of daytime hourly ODBA rate per state (dayODBAstate, dayODBAstate1, dayODBAstate2, dayODBAstate3, dayODBAstate4).
+```{r}
+dayODBAstate <- data_states_one_model %>% 
+  group_by(season,yr,ID,dayNight,state_classif) %>% 
+  filter(dayNight == "day") %>% 
+  summarize(sumODBAstate=sum(ODBAg),
+            lengthState=n()/60/60) %>%
+  mutate(rateODBAstateHr=sumODBAstate/lengthState)
+
+# State 1
+dayODBAstate1 <- dayODBAstate %>% 
+  filter(state_classif == "1")
+# State 2
+dayODBAstate2 <- dayODBAstate %>% 
+  filter(state_classif == "2")
+
+# State 3
+dayODBAstate3 <- dayODBAstate %>% 
+  filter(state_classif == "3")
+
+# State 4
+dayODBAstate4 <- dayODBAstate %>% 
+  filter(state_classif == "4")
+
+```
+
+OLD: This tests for seasonal difference in daytime ODBA hourly rate by state using t-tests.
+```{r}
+# State 1
+# Test for normality
+shapiro.test(dayODBAstate1$rateODBAstateHr) #Results: W = 0.92966, p-value = 0.09581
+# Test for equal variance
+var.test(rateODBAstateHr ~ season, data = dayODBAstate1) #Results: F = 1.9484, num df = 11, denom df = 11, p-value = 0.2839
+# Test for seasonal differences in daytime active state
+t.test(rateODBAstateHr ~ season, data = dayODBAstate1, var.equal = TRUE) #Results: t = 0.55664, df = 22, p-value = 0.5834
+
+# State 2
+# Test for normality
+shapiro.test(dayODBAstate2$rateODBAstateHr) #Results: W = 0.94205, p-value = 0.1812
+# Test for equal variance
+var.test(rateODBAstateHr ~ season, data = dayODBAstate2) #Results: F = 1.5086, num df = 11, denom df = 11, p-value = 0.5065
+# Test for seasonal differences in daytime active state
+t.test(rateODBAstateHr ~ season, data = dayODBAstate2, var.equal = TRUE) #Results: t = -1.3365, df = 22, p-value = 0.1951
+
+# State 3
+# Test for normality
+shapiro.test(dayODBAstate3$rateODBAstateHr) #Results: W = 0.90527, p-value = 0.02788
+# Test for equal variance
+var.test(rateODBAstateHr ~ season, data = dayODBAstate3) #Results: F = 1.7735, num df = 11, denom df = 11, p-value = 0.3562
+# Test for seasonal differences in daytime active state
+wilcox.test(rateODBAstateHr ~ season, data = dayODBAstate3) #Results: W = 68, p-value = 0.8428
+
+# State 4
+# Test for normality
+shapiro.test(dayODBAstate4$rateODBAstateHr) #Results: W = 0.96666, p-value = 0.5856
+# Test for equal variance
+var.test(rateODBAstateHr ~ season, data = dayODBAstate4) #Results: F = 1.56, num df = 11, denom df = 11, p-value = 0.4728
+# Test for seasonal differences in daytime active state
+t.test(rateODBAstateHr ~ season, data = dayODBAstate4, var.equal = TRUE) #Results: t = -1.6766, df = 22, p-value = 0.1078
+```
+
+OLD: This tests for seasonal difference in daytime ODBA hourly rate by state using 2-way ANOVA.
+```{r}
+shapiro.test(dayODBAstate4$rateODBAstateHr)
+var.test(rateODBAstateHr ~ season, data = dayODBAstate4)
+str(dayODBAstate4)
+dayODBAstate4$yr <- as.factor(dayODBAstate4$yr)
+z1 <- lm(rateODBAstateHr ~ season*yr, data = dayODBAstate4)
+anova(z1)
+```
+
+This tests for seasonal difference in daytime ODBA hourly rate by state using randomized block ANOVA.
+```{r}
+shapiro.test(dayODBAstate4$rateODBAstateHr)
+var.test(rateODBAstateHr ~ season, data = dayODBAstate4)
+z2 <- aov(rateODBAstateHr ~ season+yr, data = dayODBAstate4)
+summary(z2)
+```
+
+This calculates daytime hourly ODBA rate mean and SD
+```{r}
+# State 1
+mean(dayODBAstate1$rateODBAstateHr[dayODBAstate1$season=="Summer"])
+sd(dayODBAstate1$rateODBAstateHr[dayODBAstate1$season=="Summer"])
+mean(dayODBAstate1$rateODBAstateHr[dayODBAstate1$season=="Winter"])
+sd(dayODBAstate1$rateODBAstateHr[dayODBAstate1$season=="Winter"])
+
+# State 2
+mean(dayODBAstate2$rateODBAstateHr[dayODBAstate2$season=="Summer"])
+sd(dayODBAstate2$rateODBAstateHr[dayODBAstate2$season=="Summer"])
+mean(dayODBAstate2$rateODBAstateHr[dayODBAstate2$season=="Winter"])
+sd(dayODBAstate2$rateODBAstateHr[dayODBAstate2$season=="Winter"])
+
+# State 3
+mean(dayODBAstate3$rateODBAstateHr[dayODBAstate4$season=="Summer"])
+sd(dayODBAstate3$rateODBAstateHr[dayODBAstate4$season=="Summer"])
+mean(dayODBAstate3$rateODBAstateHr[dayODBAstate4$season=="Winter"])
+sd(dayODBAstate3$rateODBAstateHr[dayODBAstate4$season=="Winter"])
+
+# State 4
+mean(dayODBAstate4$rateODBAstateHr[dayODBAstate4$season=="Summer"])
+sd(dayODBAstate4$rateODBAstateHr[dayODBAstate4$season=="Summer"])
+mean(dayODBAstate4$rateODBAstateHr[dayODBAstate4$season=="Winter"])
+sd(dayODBAstate4$rateODBAstateHr[dayODBAstate4$season=="Winter"])
+```
+
+This plots daytime hourly ODBA rate
+```{r}
+PdayODBAstate <- dayODBAstate %>%   
+  ggplot() +
+  geom_boxplot(aes(x=as.factor(state_classif),y=rateODBAstateHr, color=season)) +
+  annotate("text", x = 0.6, y = 1000, label = "c", color="black") +
+  scale_color_discrete(name = "Season") +
+  scale_y_continuous(breaks = seq(0, 1000, by = 200)) +
+  scale_x_discrete(labels = c("Rest", "Rest with Noise", "Low Activity","High Activity")) +
+  labs(y = expression(paste("ODBA","  ",h^-1," ", "(g)")), y = "") +
+  theme_classic(base_size = 13) + 
+  theme(legend.position = "none") +
+  theme(#axis.text.x=element_blank(),
+        axis.title.x = element_blank())
+PdayODBAstate
+
+# Save a file at 300 ppi
+ggsave(PdayODBAstate, file="Seasonal differences in daytime hourly cost in ODBA (g) by degree of activity.png",width=12, height=8, dpi=300)
+```
+
+
+### Q3: Is there a seasonal difference in daytime activity?
+
+This creates dataframes of daytime activity (dayActive and dayRest).
+```{r}
+# Active
+dayActive <- stateSummaryIND2period2state %>% 
+  group_by(season,yr,ID,dayNight,state) %>%
+  filter(dayNight=="day",
+         state=="active") 
+# Rest
+dayRest <- stateSummaryIND2period2state %>% 
+  group_by(season,yr,ID,dayNight,state) %>%
+  filter(dayNight=="day",
+         state=="rest")
+
+```
+
+This calculates mean and SD duration of daytime activity.
+```{r}
+# Active
+mean(dayActive$stateCountHour[dayActive$season == "Summer"])
+sd(dayActive$stateCountHour[dayActive$season == "Summer"])
+mean(dayActive$stateCountHour[dayActive$season == "Winter"])
+sd(dayActive$stateCountHour[dayActive$season == "Winter"])
+
+# Rest
+mean(dayRest$stateCountHour[dayRest$season == "Summer"])
+sd(dayRest$stateCountHour[dayRest$season == "Summer"])
+mean(dayRest$stateCountHour[dayRest$season == "Winter"])
+sd(dayRest$stateCountHour[dayRest$season == "Winter"])
+```
+
+OLD: This tests for seasonal differences in amount of daytime activity using t-tests.
+```{r durdiff, warning=FALSE}
+# Active
+# Minutes
+# Test for normality
+shapiro.test(dayActive$stateCountMin) #Results: p-value = 0.02133
+# Test for equal variance
+var.test(stateCountMin ~ season, data = dayActive) #Results: p-value = 0.7784
+# Test for seasonal differences in daytime state 1 (rest)
+t.test(stateCountMin ~ season, data = dayActive, var.equal = TRUE) #Results: t = -0.31845, df = 22, p-value = 0.7531
+
+# Hour
+# Test for normality
+shapiro.test(dayActive$stateCountHour) #Results: W = 0.98213, p-value = 0.9316
+# Test for equal variance
+var.test(stateCountHour ~ season, data = dayActive) #Results: F = 1.6219, num df = 11, denom df = 11, p-value = 0.4352
+# Test for seasonal differences in daytime active state
+t.test(stateCountHour ~ season, data = dayActive, var.equal = TRUE) #Results: t = 1.7822, df = 22, p-value = 0.08852
+
+# Rest
+# Test for normality
+shapiro.test(dayRest$stateCountHour) #Results: W = 0.92799, p-value = 0.0879
+# Test for equal variance
+var.test(stateCountHour ~ season, data = dayRest) #Results: F = 1.6035, num df = 11, denom df = 11, p-value = 0.4461
+# Test for seasonal differences in daytime resting state
+t.test(stateCountHour ~ season, data = dayRest, var.equal = TRUE) #Results: t = 8.8522, df = 22, p-value = 1.057e-08
+
+```
+
+OLD: This tests for seasonal differences in amount of daytime activity using 2-way ANOVA.
+```{r}
+str(dayActive)
+dayActive$yr <- as.factor(dayActive$yr)
+c1 <- lm(stateCountHour ~ season*yr,data=dayActive)
+anova(c1)
+```
+
+This tests for seasonal differences in amount of daytime activity using randomized block ANOVA.
+```{r}
+shapiro.test(dayActive$stateCountMin)
+var.test(stateCountMin ~ season, data = dayActive)
+str(dayActive)
+dayActive$yr <- as.factor(dayActive$yr)
+c1 <- aov(stateCountHour ~ season+yr,data=dayActive)
+summary(c1)
+```
+
+This tests for seasonal differences in daytime rest using t-tests.
+```{r}
+# Test for normality
+shapiro.test(dayRest$stateCountMin) #Results: p-value = 0.1202
+# Test for equal variance
+var.test(stateCountMin ~ season, data = dayRest) #Results: p-value = 0.823
+# Test for seasonal differences in daytime rest
+t.test(stateCountMin ~ season, data = dayRest, var.equal = TRUE) #Results: t = 7.1506, df = 22, p-value = 3.61e-07
+
+```
+
+This creates dataframes of daytime state durations by state (state1day, state2day, state3day, state4day).
+```{r lowDurdiff, warning=FALSE}
+# State 1
+state1day <- stateSummaryIND2period %>% 
+  group_by(season,yr,ID,dayNight,state_classif,stateCountMin) %>%
+  filter(dayNight=="day",
+         state_classif=="1") %>%
+  ungroup
+
+# State 2
+state2day <- stateSummaryIND2period %>% 
+  group_by(season,ID,dayNight,state_classif,stateCountMin) %>%
+  filter(dayNight=="day",
+         state_classif=="2") %>%
+  ungroup
+
+# State 3
+state3day <- stateSummaryIND2period %>% 
+  group_by(season,ID,dayNight,state_classif,stateCountMin) %>%
+  filter(dayNight=="day",
+         state_classif=="3") %>%
+  ungroup
+
+# Duplicate dataframe. Creates same as stateSummaryIND2period$stateCountHour[state_classif=="3"]
+# count3Hr <-stateSummaryIND2period %>% 
+#   filter(state_classif=="3",
+#          dayNight=="day") %>% 
+#   group_by(season,ID) %>% 
+#   summarize(count3Hr=sum(stateCountHour)) 
+
+# State 4
+state4day <- stateSummaryIND2period %>% 
+  group_by(season,ID,dayNight,state_classif,stateCountMin) %>%
+  filter(dayNight=="day",
+         state_classif=="4") %>%
+  ungroup
+  
+# Duplicate dataframe. Creates same as stateSummaryIND2period$stateCountHour[state_classif=="4"]
+# count4Hr <-stateSummaryIND2period %>% 
+#   filter(state_classif=="4",
+#          dayNight=="day") %>% 
+#   group_by(season,ID) %>% 
+#   summarize(count4Hr=sum(stateCountHour))
+
+```
+
+OLD: This tests for seasonal differences in daytime state durations using t-tests.
+```{r}
+# State 1
+# Test for normality
+shapiro.test(state1day$stateCountMin) #Results: W = 0.91304, p-value = 0.04107
+# Test for equal variance
+var.test(stateCountMin ~ season, data = state1day) #Results: F = 7.6325, num df = 11, denom df = 11, p-value = 0.002155
+# Test for seasonal differences in daytime state 1 (rest)
+wilcox.test(stateCountMin ~ season, data = state1day) #Results: W = 143, p-value = 1.479e-06
+
+# State 2
+# Test for normality
+shapiro.test(state2day$stateCountMin) #Results: W = 0.94177, p-value = 0.1786
+# Test for equal variance
+var.test(stateCountMin ~ season, data = state2day) #Results: F = 0.82633, num df = 11, denom df = 11, p-value = 0.7573
+# Test for seasonal differences in daytime state 2 (rest with noise)
+t.test(stateCountMin ~ season, data = state2day, var.equal = TRUE) #Results: t = 6.4294, df = 22, p-value = 1.81e-06
+
+# State 3
+# Test for normality
+shapiro.test(state3day$stateCountMin) #Results: W = 0.95427, p-value = 0.3343
+# Test for equal variance
+var.test(stateCountMin ~ season, data = state3day) #Results: F = 1.9091, num df = 11, denom df = 11, p-value = 0.2986
+# Test for seasonal differences in daytime state 3 (low activity)
+t.test(stateCountMin ~ season, data = state3day, var.equal = TRUE) #Results: t = 4.6434, df = 22, p-value = 0.0001254
+
+# State 4
+# Test for normality
+shapiro.test(state4day$stateCountMin) #Results: W = 0.94714, p-value = 0.2347
+# Test for equal variance
+var.test(stateCountMin ~ season, data = state4day) #Results: F = 0.42056, num df = 11, denom df = 11, p-value = 0.1665
+# Test for seasonal differences in daytime state 4 (high activity)
+t.test(stateCountMin ~ season, data = state4day, var.equal = TRUE) #Results: t = -4.1098, df = 22, p-value = 0.0004615
+
+```
+
+OLD: This tests for seasonal differences in daytime state durations using 2-way ANOVA.
+```{r}
+str(state1day)
+state1day$yr <- as.factor(state1day$yr)
+str(state2day)
+state2day$yr <- as.factor(state2day$yr)
+str(state3day)
+state3day$yr <- as.factor(state3day$yr)
+str(state4day)
+state4day$yr <- as.factor(state4day$yr)
+# State 1
+d1 <- lm(stateCountHour ~ season*yr,data=state1day)
+anova(d1)
+d1a <-lm(stateCountHour ~ season+yr,data=state1day)
+anova(d1a)
+# State 2
+d2 <- lm(stateCountHour ~ season*yr,data=state2day)
+anova(d2)
+d2a <- lm(stateCountHour ~ season+yr,data=state2day)
+anova(d2a)
+# State 3
+d3 <- lm(stateCountHour ~ season*yr,data=state3day)
+anova(d3)
+d3a <- lm(stateCountHour ~ season+yr,data=state3day)
+anova(d3a)
+# State 4
+d4 <- lm(stateCountHour ~ season*yr,data=state4day)
+anova(d4)
+d4a <- lm(stateCountHour ~ season+yr,data=state4day)
+anova(d4a)
+```
+
+This tests for seasonal differences in daytime state durations using randomized block ANOVA.
+```{r}
+shapiro.test(state4day$stateCountMin)
+var.test(stateCountMin ~ season, data = state4day)
+d5 <- aov(stateCountHour ~ season+yr,data=state4day)
+summary(d5)
+d6 <- aov(stateCountHour ~ season+yr,data=state3day)
+summary(d6)
+```
+
+This calculates mean and SD state durations by state.
+```{r}
+# State 1
+mean(state1day$stateCountMin[state1day$season == "Summer"])
+sd(state1day$stateCountMin[state1day$season == "Summer"])
+mean(state1day$stateCountMin[state1day$season == "Winter"])
+sd(state1day$stateCountMin[state1day$season == "Winter"])
+
+# State 2
+mean(state2day$stateCountMin[state2day$season == "Summer"])
+sd(state2day$stateCountMin[state2day$season == "Summer"])
+mean(state2day$stateCountMin[state2day$season == "Winter"])
+sd(state2day$stateCountMin[state2day$season == "Winter"])
+
+# State 3
+# Minutes
+mean(state3day$stateCountMin[state3day$season == "Summer"])
+sd(state3day$stateCountMin[state3day$season == "Summer"])
+mean(state3day$stateCountMin[state3day$season == "Winter"])
+sd(state3day$stateCountMin[state3day$season == "Winter"])
+
+# Hours
+mean(count3Hr$count3Hr[count3Hr$season=="Summer"])
+sd(count3Hr$count3Hr[count3Hr$season=="Summer"])
+mean(count3Hr$count3Hr[count3Hr$season=="Winter"])
+sd(count3Hr$count3Hr[count3Hr$season=="Winter"])
+
+# State 4
+# Minutes
+mean(state4day$stateCountMin[state4day$season == "Winter"])
+sd(state4day$stateCountMin[state4day$season == "Winter"])
+mean(state4day$stateCountMin[state4day$season == "Summer"])
+sd(state4day$stateCountMin[state4day$season == "Summer"])
+
+# Hours
+mean(count4Hr$count4Hr[count4Hr$season=="Summer"])
+sd(count4Hr$count4Hr[count4Hr$season=="Summer"])
+mean(count4Hr$count4Hr[count4Hr$season=="Winter"])
+sd(count4Hr$count4Hr[count4Hr$season=="Winter"])
+
+```
+
+This plots daytime activity (2-state)
+```{r}
+PdayDur2state <- stateSummaryIND2period2state %>%
+  group_by(ID,season,dayNight) %>% 
+  filter(dayNight == "day") %>%
+  ggplot() +
+  geom_boxplot(aes(x=state,y=stateCountHour, color = season)) +
+  annotate("text", x = 0.5, y = 14, label = "A", color="black") +
+  annotate("text", x = 1, y = 13, label = "*", color="black") +
+  scale_color_discrete(name = "Season") +
+  scale_y_continuous(breaks = seq(0, 14, by = 2)) +
+  scale_x_discrete(labels = c("Rest", "Active"),
+                   limits = c("rest","active")) +
+  theme_classic(base_size = 13) + 
+  theme(legend.position = "none") +
+  # theme(axis.text.x = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.text.y = element_text(size=18))
+PdayDur2state
+ggsave(PdayDur2state, file="Seasonal daytime amount of activity.png",dpi=300)
+
+```
+
+This plots daytime state durations (4-state).
+```{r}
+# Plot daytime absolute state durations
+PdayDur4state <- stateSummaryIND2period %>%
+  group_by(ID,season,dayNight) %>% 
+  filter(dayNight == "day") %>%
+  ggplot() +
+  geom_boxplot(aes(x=state_classif,y=stateCountHour, color = season)) +
+  annotate("text", x = 0.6, y = 14, label = "B", color="black") +
+  annotate("text", x = 1, y = 10, label = "*", color="black") +
+  annotate("text", x = 2, y = 10, label = "*", color="black") +
+  annotate("text", x = 3, y = 10, label = "*", color="black") +
+  annotate("text", x = 4, y = 10, label = "*", color="black") +
+  scale_color_discrete(name = "Season") +
+  scale_y_continuous(breaks = seq(0, 14, by = 2)) +
+  scale_x_discrete(labels = c("Rest", "Rest with Noise", "Low Activity","High Activity")) +
+  theme_classic(base_size = 13) + 
+  theme(legend.position = "none") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  # theme(axis.text.x = element_blank()) +
+  theme(axis.text.y = element_text(size=18))
+PdayDur4state
+# Save a file at 300 ppi
+# ggsave(PdayDur, file="Seasonal daytime state absolute durations.png",width=12, height=8, dpi=300)
+```
+
+This creates multi panel plot. 
+```{r}
+PactiveDiff <- ggarrange(PdayDur2state,PdayDur4state, align="v", nrow=2)
+PactiveDiff <- annotate_figure(PactiveDiff,left = text_grob("Duration (h)", color = "black", rot = 90))
+
+# Save a file at 300 ppi
+ggsave(PactiveDiff, file="Seasonal difference in daytime activity no ODBA.png",dpi=300)
+
+```
+
+### Cross-check duration results with state proportions
+
+Create subsets of daytime state proportions (simple and complex)
+```{r}
+dayProp4 <- stateSummaryIND2period %>% 
+  group_by(season,state_classif) %>% 
+  filter(dayNight == "day") %>%
+  summarize(mProp = mean(stateProp))
+
+dayProp2 <- stateSummaryIND2period2state %>% 
+  group_by(season,state) %>% 
+  filter(dayNight == "day") %>%
+  summarize(mProp = mean(stateProp))
+
+fullProp4 <- stateSummaryIND2period %>% 
+  group_by(season,state_classif) %>% 
+  summarize(mProp = mean(stateProp))
+
+fullProp2 <- stateSummaryIND2period2state %>% 
+  group_by(season,state) %>% 
+  summarize(mProp = mean(stateProp))
+
+save(dayProp2,file= "daytime proportions simple model.RData")
+```
+
+Plots proportions 24-h and daytime (simple and complex)
+```{r}
+P24prop4 <- stateSummaryIND2period %>% 
+  group_by(season,state_classif) %>% 
+  ggplot() +
+  geom_boxplot(aes(x = state_classif, y = stateProp, color = season)) +
+  ylim(0,1) +
+  labs(x="State",
+       y = "Proportion (%)",
+       title = "Seasonal 24-h state proportions") + 
+  scale_color_discrete(name = "Season") +
+  # scale_x_discrete(labels = c("Rest", "Active"),
+  #                  limits = c("rest","active")) +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.text.y = element_text(size=18)) +
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+P24prop4
+
+P24prop2 <- stateSummaryIND2period2state %>% 
+  group_by(season,state) %>% 
+  # filter(dayNight == "night") %>% 
+  ggplot() +
+  geom_boxplot(aes(x = state, y = stateProp, color = season)) +
+  ylim(0,1) +
+  labs(x="State",
+       y = "Proportion (%)",
+       title = "Seasonal 24-h state proportions") + 
+  scale_color_discrete(name = "Season") +
+  scale_x_discrete(labels = c("Rest", "Active"),
+                   limits = c("rest","active")) +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.text.y = element_text(size=18)) +
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+P24prop2
+
+PdayProp4 <- stateSummaryIND2period %>% 
+  group_by(season,state_classif) %>% 
+  filter(dayNight == "day") %>%
+  ggplot() +
+  geom_boxplot(aes(x = state_classif, y = stateProp, color = season)) +
+  ylim(0,1) +
+  labs(x="State",
+       y = "Proportion (%)",
+       title = "Seasonal daytime state proportions") + 
+  scale_color_discrete(name = "Season") +
+  # scale_x_discrete(labels = c("Rest", "Active"),
+  #                  limits = c("rest","active")) +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.text.y = element_text(size=18)) +
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PdayProp4
+
+PdayProp2 <- stateSummaryIND2period2state %>% 
+  group_by(season,state) %>% 
+  filter(dayNight == "night") %>%
+  ggplot() +
+  geom_boxplot(aes(x = state, y = stateProp, color = season)) +
+  ylim(0,1) +
+  labs(x="State",
+       y = "Proportion (%)",
+       title = "Seasonal daytime state proportions") + 
+  scale_color_discrete(name = "Season") +
+  scale_x_discrete(labels = c("Rest", "Active"),
+                   limits = c("rest","active")) +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.text.y = element_text(size=18)) +
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PdayProp2
+
+```
+
+### Seasonal difference in daytime ODBA sum
+
+This creates a dataframe of daytime ODBA sum (gravitational g) per individual.
+```{r}
+sumODBAday <- data_states_one_model %>% 
+  group_by(yr,season,ID) %>%
+  filter(dayNight=="day") %>% 
+  summarize(sumODBAday = sum(ODBA/9.81,na.rm = TRUE))
+
+```
+
+This tests for differences in daytime ODBA sum per individual using t-tests.
+```{r}
+# Test for normality
+shapiro.test(sumODBAday$sumODBAday)
+# Test for equal variances
+var.test(sumODBAday ~ season,data=sumODBAday) #Variance is equal
+# Test for seasonal differences
+t.test(sumODBAday ~ season,data=sumODBAday,var.equal = TRUE)
+
+```
+
+This calculates mean and SD of daytime ODBA sum.
+```{r}
+mean(sumODBAday$sumODBAday[sumODBAday$season=="Summer"])
+sd(sumODBAday$sumODBAday[sumODBAday$season=="Summer"])
+mean(sumODBAday$sumODBAday[sumODBAday$season=="Winter"])
+sd(sumODBAday$sumODBAday[sumODBAday$season=="Winter"])
+```
+
+This plots daytime state durations by solar hour
+```{r sumODBA,warning=FALSE}
+# Plot daytime state duration by solar hour
+pd <- position_dodge(0.1) # move them .05 to the left and right
+PODBAdayhr <- stateBout %>% 
+  group_by(ID,dayNight,timeBin,season,state) %>%
+  summarize(sumODBA=sum(ODBA)) %>%
+  filter(dayNight=="day") %>%
+  group_by(season,timeBin) %>% 
+  summarize(mODBA=mean(sumODBA),
+            seODBA=std.error(sumODBA)) %>% 
+  ggplot() +
+  geom_errorbar(aes(x=timeBin,ymin=mODBA-seODBA, ymax=mODBA+seODBA), width=.1,position=pd) +
+  geom_point(aes(x=timeBin,y=mODBA,colour=season),position=pd,size=3) +
+  labs(x="Solar Hour of Day",
+       y = "Mean ODBA (g)",
+       title = "Daytime mean ODBA by solar hour") + 
+  # scale_x_discrete(limits=0:23) +
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PODBAdayhr
+
+# Save a file at 300 ppi
+ggsave(PODBAdayhr, file="Seasonal mean ODBA by solar hour.png",width=12, height=8, dpi=300)
+```
+
+This creates multipanel plot.
+```{r}
+PdayActiveODBA <- ggarrange(PcountdayhrAct,PODBAdayhr,nrow=2)
+PdayActiveODBA
+ggsave(PdayActiveODBA, file="Seasonal mean state duration and ODBA by solar hour.png",width=12, height=8, dpi=300)
+```
+
+### Q3: Does daily distance traveled differ seasonally?
+Calculate daily distance traveled by season. Step length might capture error because of 2-min duty cycle. Can subsample again so we're not affected by accuracy of location. Once I've calculated daily travel distance, I can compare to results of seasonal activity levels.   
+
+Includes stats and plot.
+
+```{r GPSstates, warning=FALSE}
+# See Analyze TWLoggerGPS script
+load("GPS_states.RData")
+
+# Calculate total daytime distance traveled
+
+distSum <- GPS_states_odba %>% 
+  group_by(season,yr,ID) %>%
+  summarize(distSum = sum(dist,na.rm = TRUE)/1000)
+
+# Test for seasonal difference in total distance traveled
+shapiro.test(distSum$distSum) #Results: p-value = 0.05187
+var.test(distSum ~ season, data = distSum) #Results: p-value = 0.0754
+t.test(distSum ~ season, data = distSum, var.equal = TRUE) #Results: t = -4.0636, df = 10, p-value = 0.002274
+summary(aov(distSum ~ season, data = distSum))
+
+# Calculate total distance traveled SD
+sd(distSum$distSum[distSum$season=="Summer"])
+sd(distSum$distSum[distSum$season=="Winter"])
+
+# Calculate max step length per season
+distSU <-GPS_states_odba %>% 
+  filter(season=="Summer")
+distWI <-GPS_states %>% 
+  filter(season=="Winter")
+mean(distSU$dist,na.rm = TRUE)
+mean(distWI$dist,na.rm = TRUE)
+sd(distSU$dist,na.rm = TRUE)
+sd(distWI$dist,na.rm = TRUE)
+
+# Validate state classifications using distance traveled by state bout? Or mean distance traveled per 1 Hz by state?
+# Calculate mean dist traveled by state
+# Calculate mean daytime distance traveled by state
+# Test for seasonal difference in daytime distance traveled by state
+
+## Map
+
+mapZoom <- 13 # KJH!! Adjust this to fit all the data (20 is all the way zoomed in)
+#plot the extent of this map (NOTE: must adjust zoom parameter)
+myMap <-  get_googlemap(center = c(lon = mean(c(min(GPS_states$long), max(GPS_states$long))),  lat = mean(c(min(GPS_states$lat),max(GPS_states$lat)))),
+                        zoom = mapZoom, 
+                        size = c(640,400),
+                        scale = 2,
+                        extent="device",
+                        maptype="hybrid", #"terrain"
+                        style = c(feature = "all", element = "labels", visibility = "off"))
+
+#plot map
+ggmap(myMap)+
+  geom_point(data=gpsData,aes(x=as.numeric(as.character(Long)),y=as.numeric(as.character(Lat))),alpha = 0.5, color= 'yellow') +
+  scale_alpha(guide = 'none') + 
+  theme(legend.position="right", 
+        plot.title = element_text(hjust = 0.5)) + 
+  ggtitle(deploymentName) + coord_fixed(1.3) + 
+  labs(
+    x = "Longitude",
+    y = "Latitude"
+  )
+#save map output as .png
+ggsave(sprintf("%s_Map.png",deploymentName), plot = last_plot(), device = "png",
+       scale = 2, width = 7, height = 5, units = "in", dpi = 300, limitsize = F)
+
+  
+```
+
+### Roland's plot
+
+```{r}
+pdf("distributions_and_timeseries.pdf",width=11,height=10)
+par(mfrow=c(2,1))
+cb <- c("#F0E442","#E69F00", "#56B4E9", "#009E73")
+hist(ODBAall,breaks=seq(0,3.2,length=1000),prob=TRUE,xlim=c(0,0.3),ylim=c(0,10),main="",xlab="ODBA (gravitational g)",col="lightgrey")
+curve(mod$delta[1]*dgamma(x,shape=mod$mu[1]^2/mod$sigma[1]^2,scale=mod$sigma[1]^2/mod$mu[1]),from=0,to=3.5,add=TRUE,col=cb[1],lwd=4,n=2000)
+curve(mod$delta[2]*dgamma(x,shape=mod$mu[2]^2/mod$sigma[2]^2,scale=mod$sigma[2]^2/mod$mu[2]),from=0,to=3.5,add=TRUE,col=cb[2],lwd=4,n=2000)
+curve(mod$delta[3]*dgamma(x,shape=mod$mu[3]^2/mod$sigma[3]^2,scale=mod$sigma[3]^2/mod$mu[3]),from=0,to=3.5,add=TRUE,col=cb[3],lwd=4,n=2000)
+curve(mod$delta[4]*dgamma(x,shape=mod$mu[4]^2/mod$sigma[4]^2,scale=mod$sigma[4]^2/mod$mu[4]),from=0,to=3.5,add=TRUE,col=cb[4],lwd=4,n=2000)
+legend(0.2,8,c("Rest","Rest with noise","Low activity","High activity"),col=cb[1:4],lwd=c(3,3,3,3),lty=c(1,1,1,1))
+plot(data_with_states24$ODBA[15601:17401],type="h",col=cb[data_with_states24$state_classif[15601:17401]],lwd=2,ylim=c(0,1.1),ylab="ODBA",main="",xlab="time of day",xaxt="n")
+text(1670,1.03,paste(namesind[24]))
+axis(1,c("20:20:00","20:30:00","20:40:00","20:50:00"),at=c(1,601,1201,1801))
+graphics.off()
+
+## KJH attempt to redo with ggplot
+library(scales)
+library("ggplot2")
+library("maps")
+library("grid")
+library("gridExtra")
+tzOffset <- "Etc/GMT+3" # Falklands time in the winter
+
+# Confirm states are treated as factor
+data_with_states24$state_classif <- as.factor(data_with_states24$state_classif)
+
+# Define color palette
+cb <- c("#F0E442","#E69F00", "#56B4E9", "#009E73") # these are the colors for the state labels
+
+# Create shading to identify inset in main plot
+shade = data.frame(x1=as.POSIXct(strptime("2019-02-21 20:36:30",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset), 
+                   x2=as.POSIXct(strptime("2019-02-21 20:38:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset),
+                   y1=0,
+                   y2=1.2)
+
+shade2 = data.frame(x1=as.POSIXct(strptime("2019-02-21 20:28:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset), 
+                   x2=as.POSIXct(strptime("2019-02-21 20:29:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset),
+                   y1=0,
+                   y2=1.2)
+
+# Subset time series for main plot
+startMain <- as.POSIXct(strptime("2019-02-21 20:20:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endMain <- as.POSIXct(strptime("2019-02-21 20:50:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+
+pMain <- data_with_states24 %>% 
+  subset(dttz >= startMain & dttz <= endMain) %>% 
+  ggplot() +
+  geom_bar(aes(x=dttz, y=ODBAg, color=state_classif),
+           stat = "identity") +
+  scale_color_manual(values = cb) +
+  scale_y_continuous(breaks = seq(0,1.2, by = 0.2), expand = c(0, 0)) +
+  scale_x_datetime(limits=c(startMain,
+                            as.POSIXct(strptime("2019-02-21 20:50:30",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)),
+                            expand = c(0,0)) +
+  # scale_y_continuous(breaks = seq(0,1.2, by = 0.2)) +
+  # scale_x_datetime() +
+  # labs(title="Time series of ODBA") +
+  labs(x="Time", y="ODBA (gravitational g)") +
+  theme_classic(base_size = 13) +
+  theme(legend.position = "none",
+        axis.title=element_text(size=18),
+        axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))) +
+  geom_rect(data=shade2, mapping=aes(xmin=x1, xmax=x2, ymin=y1, ymax=y2), color='grey', alpha=0.5)
+pMain
+
+# Subset time series for inset
+startInset <-as.POSIXct(strptime("2019-02-21 20:36:30",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endInset <-as.POSIXct(strptime("2019-02-21 20:38:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+startInset2 <-as.POSIXct(strptime("2019-02-21 20:28:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endInset2 <-as.POSIXct(strptime("2019-02-21 20:29:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+
+addline_format <- function(x,...){
+    gsub('\\s','\n',x)
+}
+# Plot subset time series
+pInset <- data_with_states24 %>% 
+  subset(dttz >= startInset2 & dttz <= endInset2) %>% 
+  ggplot() +
+  geom_bar(aes(x=dttz, y=ODBAg, color=state_classif, fill=state_classif),
+           stat = "identity") +
+  scale_color_manual(values = cb, aesthetics = c("color", "fill")) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_datetime(expand = c(0,0.2)) +
+  # scale_y_continuous() +
+  # scale_x_datetime() +
+  # labs(title="Minute 20:28 to 20:29") +
+  labs(x="Time (s)", y=expression(atop("ODBA", paste("(gravitational g)")))) +
+  theme_classic(base_size = 13) +
+  theme(legend.position = "none",
+        axis.title=element_text(size=18),
+        axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0)))
+pInset
+
+# Arrange inset within main plot. This prints to plot panel in R studio (does not print within R markdown)
+grid.newpage()
+vpb_ <- viewport(width = 1, height = 1, x = 0.5, y = 0.5)  # the larger map
+vpa_ <- viewport(width = 0.4, height = 0.4, x = 0.8, y = 0.8)  # the inset in upper right
+print(pMain, vp = vpb_)
+print(pInset, vp = vpa_)
+
+
+# ggsave(p2, file="time series.png",dpi=300)
+```
+
+```{r}
+sd(c(673, 820, 772, 771, 791, 730, 880, 833, 772, 621, 665, 661))
+mean(c(673, 820, 772, 771, 791, 730, 880, 833, 772, 621, 665, 661))
+```
+
+
+
+### Unused Scripts
+
+### Q4: How does ODBA correlate with state? Is ODBA a function of state bout length?
+
+This calculates mean ODBA per state per ID. 
+```{r}
+# m1 <- glm(boutODBAmean ~ state_classif + boutLengthSec,data=stateBoutSummary)
+# summary(m1)
+# TukeyHSD(m1, which = "state_classif")
+t1 <- sqrt(stateBoutSummary$boutODBAmean)
+t2 <-1/stateBoutSummary$boutODBAmean
+stateODBA <- stateBoutSummary %>% 
+  ggplot() +
+  geom_point(aes(boutLengthSec/60/60,t1,color=state_classif)) +
+  scale_color_discrete(name = "State") +
+  labs(x="State bout length (hr)",
+       y = "Average ODBA (g) per state bout",
+       title = "ODBA as a function of state and bout length") + 
+  scale_x_continuous(breaks = seq(0,2, by = 0.2),limits=c(0,1.6),expand = c(0, 0)) +
+  scale_y_continuous(breaks = seq(0,1.4, by = 0.2),limits=c(0,1),expand = c(0, 0)) +
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+  
+stateODBA
+ggsave(stateODBA, file="ODBA as a function of state and bout length_v3.png",width=12, height=8, dpi=300)
+
+```
+
+#### Plot seasonal daytime absolute duration of active state by solar hour
+Maybe use this one. This plots rest and active by solar hour. During summer, many resources are available across time. Whereas during winter, resources are spatiotemporally fixed.
+
+```{r stateHr, warning=FALSE}
+#KJH: Pick up here. In the middle of calculating mean as index of energy use per state bout. Stopped to plot density distribution of ODBA values by state
+stateBout <- data_states_one_model %>% 
+  group_by(season,ID) %>% 
+  arrange(dttz) %>%
+  mutate(boutNum = cumsum(replace_na(lag(state_classif) != state_classif, 1))) %>%
+  ungroup %>% 
+  group_by(season,ID,boutNum) %>% 
+  mutate(boutLengthSec = n(), #bout length is in seconds
+         boutODBAsum = sum(ODBA/9.81,na.rm = TRUE),
+         boutODBAmean = mean(ODBA/9.81,na.rm = TRUE)) %>% #mean gives an index of energy use per state 
+  ungroup
+stateBout$state_classif <- as.factor(stateBout$state_classif)
+stateBout$state <- ifelse(stateBout$state_classif==1|stateBout$state_classif==2,"rest","active")
+stateBout$hr <- hour(stateBout$dttz)
+stateBout$hr <- as.factor(stateBout$hr)
+
+# Create SolarMidnight based hourly bins
+stateBout$solarMidnight <- hms::as.hms((stateBout$solarnoon- dhours(12)),tz = tzOffset)
+stateBout$time <- hms::as.hms(stateBout$dttz,tz = tzOffset)
+stateBout$timeBin <- floor(as.numeric(difftime(stateBout$time, stateBout$solarMidnight,units = "hours")))
+stateBout$timeBin <- ifelse(stateBout$timeBin < 0,stateBout$timeBin+24,stateBout$timeBin)
+stateBout$timeBin <- as.factor(stateBout$timeBin)
+
+# Remove unused vectors
+stateBout <- subset(stateBout, select = c(ID,dttz,true_since,season,dayNight,timeBin,ODBA,state_classif,state,yr,boutNum,boutLengthSec,boutODBAsum,boutODBAmean) )
+
+# Extract bout length
+stateBoutSummary <- stateBout %>%
+  group_by(season,ID,boutNum,state_classif,dayNight,timeBin,state) %>%
+  summarize(boutLengthSec=first(boutLengthSec),
+            boutODBAsum=first(boutODBAsum),
+            boutODBAmean=boutODBAsum/boutLengthSec) %>%
+  ungroup
+stateBoutSummary
+
+# Plot daytime absolute state duration by solar hour
+pd <- position_dodge(0.1) # move them .05 to the left and right
+PcountdayhrAct <- stateBout %>% 
+  group_by(ID,dayNight,timeBin,season,state) %>%
+  summarize(stateCount=n()/60) %>% #Calculates duration (minutes)
+  filter(dayNight=="day",
+         state=="active") %>%
+  group_by(season,timeBin) %>% 
+  summarize(mDur=mean(stateCount),
+            seDur=std.error(stateCount)) %>% 
+  ggplot() +
+  geom_errorbar(aes(x=timeBin,ymin=mDur-seDur, ymax=mDur+seDur), width=.1,position=pd) +
+  geom_point(aes(x=timeBin,y=mDur,colour=season),position=pd,size=3) +
+  labs(x="Solar Hour",
+       y = "Mean Duration (min)",
+       title = "Daytime mean active state duration by solar hour") + 
+  # scale_x_discrete(limits=0:23) +
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PcountdayhrAct
+
+# Save a file at 300 ppi
+ggsave(PcountdayhrAct, file="Seasonal mean state durations by solar hour.png",width=12, height=8, dpi=300)
+```
+
+#### How does ODBA respond to season across states?
+This needs work.
+
+```{r}
+s1 <- stateBoutSummary$boutODBAsum[stateBoutSummary$state_classif=="1"]
+s2 <- stateBoutSummary$boutODBAsum[stateBoutSummary$state_classif=="2"]
+s3 <- stateBoutSummary$boutODBAsum[stateBoutSummary$state_classif=="3"]
+s4 <- stateBoutSummary$boutODBAsum[stateBoutSummary$state_classif=="4"]
+
+dStateODBA <- ggplot() +
+  geom_density(aes(s1),alpha=0.25) +
+  geom_density(aes(s2),alpha=0.25) +
+  geom_density(aes(s3),alpha=0.25) +
+  geom_density(aes(s4),alpha=0.25)
+
+dStateODBA2 <- stateBoutSummary %>% 
+  group_by(season,ID,dayNight,state_classif) %>% 
+  summarize(stateODBAsum=sum(boutODBAsum)) %>%
+  ggplot()+
+  geom_boxplot(aes(state_classif,stateODBAsum,fill=season))
+dStateODBA2
+
+library(ggplot2);library(reshape2)
+data<- melt(x)
+ggplot(data,aes(x=value, fill=variable)) + geom_density(alpha=0.25)
+
+
+dState3 <- density(stateBoutSummary$boutODBAsum[stateBoutSummary$state_classif=="3"])
+plot(dState3)
+dState4 <- density(stateBoutSummary$boutODBAsum[stateBoutSummary$state_classif=="4"])
+plot(dState4)
+```
+
+#### Plot daytime active states by season
+```{r highDurdiff, warning=FALSE}
+# Plot daytime absolute state durations
+PdayDur34 <- stateSummaryIND2period %>%
+  group_by(ID,season,dayNight) %>% 
+  filter(dayNight == "day",
+         state_classif == "3" | state_classif == "4") %>% #Alternative filter code: state_classif %in% c(3,4)
+  ggplot() +
+  geom_boxplot(aes(x=state_classif,y=stateCountMin, color = season)) +
+  scale_color_discrete(name = "Season") +
+  # scale_y_continuous(breaks = seq(0, 280, by = 10)) +
+  scale_x_discrete(labels = c("Low Activity","High Activity")) +
+  labs(x="State",
+       y = "Duration (min)",
+       title = "Seasonal differences in daytime amount of activity") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PdayDur34
+# Save a file at 300 ppi
+# ggsave(PdayDur34, file="Seasonal daytime absolute state durations for states 3 and 4.png",width=12, height=8, dpi=300)
+
+```
+
+#### Plot nighttime state durations
+```{r}
+PodbaNight <- stateODBA %>% 
+  group_by(season,ID,dayNight) %>%
+  summarize(odbaSum = sum(odba)) %>%
+  ggplot() +
+  geom_boxplot(aes(x = dayNight, y = odbaSum, 
+                   color = season)) +
+  labs(x="State",
+       y = "Duration (hr)",
+       title = "State Durations per Individual (Night)") + 
+  theme_classic(base_size = 13) + 
+  theme(plot.title = element_text(size=14)) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=14))
+PodbaNight
+```
