@@ -2,6 +2,9 @@ library(tidyverse)
 library(zoo)
 setwd("/Users/jamesfahlbusch/Documents/Projects/R/TWlogger")
 tzOffset <- "Etc/GMT+3" # Falklands time in the winter
+#Make sure the sampling rate you choose aligns with the frequency
+resampleRate = 50
+
 filename <- file.choose()
 # Load the Combined Data File
 accdata <- read_csv(filename)
@@ -24,14 +27,24 @@ freqCount / as.numeric(names(freqCount))
 # Percentage of total of each freq
 format((freqCount / as.numeric(names(freqCount)))/sum((freqCount / as.numeric(names(freqCount)))),scientific=FALSE)
 # Find the actual number of samples that will be interpolated
-#JAF Todo
 
+frequencies <- data.frame(freqCount)
+frequencies$samplingRate <- as.numeric(names(freqCount))
 
-#Make sure the sampling rate you choose aligns with the frequency
-resampleRate = 50
+frequencies <- frequencies %>% 
+  mutate(samplesInterpolated = case_when(
+    samplingRate < resampleRate ~ (resampleRate-samplingRate)*(Freq/samplingRate),
+    TRUE ~ 0.0),
+    totalSamples = case_when(
+    samplingRate > resampleRate ~ (Freq - Freq/samplingRate),
+    TRUE ~ Freq*1.0)) 
 
-
-
+freqSum <- frequencies %>% 
+  summarize(totalInterpoated = sum(samplesInterpolated),
+            totalSamples = sum(totalSamples),
+            # note: this is in % (i.e. has already been multiplied by 100)
+            percentInterpolated = sum(samplesInterpolated)/sum(totalSamples)*100)
+freqSum
 
 
 #makeRegularWGPS <- function(filenameA, resampleRate){

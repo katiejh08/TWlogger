@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Load libraries; set working directory and local time zone offset
 NOTE: Saunders is in UTM20S 
 
-```{r Libraries,echo=FALSE,results="hide",warning=FALSE,collapse=TRUE}
+```{r Libraries,echo=FALSE,results="hide",warning=FALSE,collapse=TRUE,message=FALSE}
 library(tidyverse)
 library(dplyr)
 library(maptools) # to calculate solarpos
@@ -47,11 +47,6 @@ library(mapdata)
 library(devtools)
 library(RColorBrewer)
 
-# Example of how to install and load multiple packages at once
-# install.packages(c("adehabitatHR","rgdal","sp", "ggmap", "mapproj", "maptools", "rgeos","raster","leaflet","move","ctmm","BBMM","PBSmapping"))
-# packagelist <- c("adehabitatHR","rgdal","sp", "ggmap", "mapproj","rgeos","maptools","raster","leaflet","move","ctmm","BBMM", "PBSmapping")
-# lapply(packagelist, require, character.only = TRUE)
-
 source('UTMConversionfxns.R')
 register_google(key = read.csv("APIkey.csv",header=FALSE)[1,])
 has_google_key()
@@ -78,6 +73,7 @@ filenames <- list.files(path = pathChoice, pattern = "*.csv", all.files = FALSE,
 
 # Load deployment times from CSV
 depTimes <- read_csv(paste0(getwd(),"/depTimes.csv"))
+depTimes <-depTimes[-c(8), ]
 depTimes$startTime <- as.POSIXct(strptime(depTimes$startTime,format="%m/%d/%Y %H:%M"),tz=tzOffset)
 depTimes$endTime <- as.POSIXct(strptime(depTimes$endTime,format="%m/%d/%Y %H:%M"),tz=tzOffset)
 
@@ -91,7 +87,7 @@ for(i in 1:length(filenames)) {
                                     Long = col_double()))
   # select only columns with name, lat, long, etc.
   data <- data[,c("Lat","Long","DateUTC","TimeUTC")]
-   # extract deployment name from filename
+  # extract deployment name from filename
   name <- strsplit(filenames[i],"[.]")[[1]][1] # This removes the .CSV
   name <- str_replace_all(name,"\\\\","/") # this makes it work for both windows and mac
   name <- sapply(strsplit(name,"[/]"),tail,1) # Take just the filename
@@ -101,15 +97,15 @@ for(i in 1:length(filenames)) {
   # Create DateTime (UTC)
   data$dt  <- as.POSIXct(strptime(paste(data$DateUTC, data$TimeUTC,sep=" "),format = "%m/%d/%Y %H:%M:%S"), tz="GMT")
   attr(data$dt, "tzone") # Check tz
-   # select only columns with name, lat, long, etc.
+  # select only columns with name, lat, long, etc.
   data <- data[,c("name","dt", "Lat","Long")]
   colnames(data) <- c("name","dt","lat","long")
   # Convert to local time
   data$dttz <- data$dt # set dttz to dt
   attr(data$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
   data <- data %>% arrange(dttz)
-  startTime <- depTimes %>% filter(ID == name) %>% .$startTime
-  endTime <- depTimes %>% filter(ID == name) %>% .$endTime
+  startTime <- depTimes %>% dplyr::filter(ID == name) %>% .$startTime
+  endTime <- depTimes %>% dplyr::filter(ID == name) %>% .$endTime
   data <- subset(data, data$dttz >= startTime & data$dttz <= endTime)
 
   # Create useful identifiers
@@ -418,7 +414,6 @@ shapeSU <- c("B50"=0, "C51"=1, "G53"=2, "M57"=3, "X56"=4, "Z55"=5, "Z59"=6)
 ```
 
 #### Plot seasonal distribution of states
-
 ```{r}
 PxyStateSUd <- ggmap(myMapSU) + 
   geom_point(data = xyStateSUd,aes(x=long,y=lat, color = state),alpha=0.8,size=0.8) +
@@ -489,7 +484,6 @@ ggsave(PxyStateSeas, file="Seasonal distribution of states.png",width=12, height
 ```
 
 #### Plot seasonal distribution by ID
-
 ```{r echo=FALSE, warnings=FALSE}
 # Plot summer daytime distribution of individuals
 PxyIDSUd <- ggmap(myMapSU) + 
