@@ -1,0 +1,338 @@
+---
+title: "TWLogger Calibration Processing Scripts"
+author: "James Fahlbusch & Katie Harrington"
+date: "October 17, 2019"
+output: html_document
+---
+This script processes calibration data recorded by a TWLogger. Calibration data must be processed prior to applying to field data collected by a TWLogger. This script processes one logger at a time and must be run through to completion. There are multiple safety points that will save backup RData files.
+
+The goal of these scripts are to produce calibration values saved as CSV files. 
+
+This document includes scripts to:       
+1. Setup R environment
+2. Create global variables
+3. Import and pre-process calibration acceleration data
+4. Rediscretize calibration acceleration data (JAF: This was optional for our processing scripts, but it should be mandatory, yes?)
+5. Extract calibration values
+
+1. Setup R environment
+```{r setup,echo=FALSE,results="hide",warning=FALSE,collapse=TRUE,include=FALSE}
+# Set the working directory to the location of this file
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path ))
+rm(current_path)
+getwd()
+
+# This function loads required packages and installs them if they are not found
+pkgTest <- function(x)
+{
+  if (!require(x,character.only = TRUE))
+  {
+    install.packages(x,dep=TRUE)
+    if(!require(x,character.only = TRUE)) stop("Package not found")
+  }
+}
+# Load Packages
+pkgTest("tidyverse")
+pkgTest("dplyr")
+pkgTest("zoo")
+pkgTest("tagtools")
+
+source('UTMConversionfxns.R')
+```
+
+2. Define global variables
+```{r}
+# Set the timezone offset from UTC (NOTE: This will be specific to where data is recorded)
+tzOffset <- "Etc/GMT+3" # Falklands time
+
+# Specify the start and end time of recording calibration data 
+startTime <- as.POSIXct(strptime("2016-08-18 12:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2019-08-19 14:15:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+```
+
+3. Import and pre-process calibration acceleration data
+```{r}
+# Select the CSV file containing the calibration acceleration data
+filename <- file.choose() # Filename is used later to create deployment ID (depid)
+accdata <- filename
+
+# Create a name column containing the date and tag number
+accdata$name <- row.names(accdata)
+deploymentName <- strsplit(accdata$name[1],'/')
+deploymentName <- deploymentName[[1]][(length(deploymentName[[1]]))-1] #pulls name of deployment from row names (n-1 element of split string)
+accdata$name <- deploymentName
+# Check to see if worked
+str(accdata)
+
+# Reorder columns to prepare to change column names
+accdata <- accdata[,c("name", "Date.MM.DD.YYYY.","Time.hh.mm.ss.","Timestamp.Ms.","Temp.Raw.",
+                      "ACCELX","ACCELY","ACCELZ","MAGX","MAGY","MAGZ","Sats","HDOP","Latitude","Longitude","FixAge","DateUTC","TimeUTC","DateAge","Altitude","Course","Speed")]
+# Change column names to more practical shorter names
+colnames(accdata)[1:22] <- c("name","date","time","ts","temp","ax","ay","az","mx","my","mz","Sats","HDOP","Lat","Long","FixAge","DateUTC","TimeUTC","DateAge","Altitude","Course","Speed")
+rownames(accdata) <- c()
+
+# Create proper datetime objects (convert GMT to local time zone of deployment)
+accdata$dt <- as.POSIXct(paste(accdata$date, accdata$time), format="%m/%d/%Y %H:%M:%S", tz='GMT')
+attr(accdata$dt, "tzone") # check that dt is in GMT
+accdata$dttz <- accdata$dt # set dttz to dt
+attr(accdata$dttz, "tzone") <- tzOffset # change the timezone to tzOffset
+attr(accdata$dttz, "tzone") # check that dttz is in local time
+str(accdata)
+
+# Remove unused columns
+accdata <- subset(accdata, select = -c(date,time) )
+
+# Run subset() function to extract data for the selected timerange
+accdata <- subset(accdata, accdata$dttz >= startTime & accdata$dttz <= endTime)
+
+# Check to see if worked
+summary(accdata) 
+```
+
+4. Rediscretize calibration acceleration data
+```{r}
+# Make sure the sampling rate you choose aligns with the frequency
+resampleRate = 50
+
+# Assumes that data has already been processed as accData (in preceding section)
+data <- accdata[, c("name","ts","temp","ax","ay","az","mx","my","mz","dt","dttz")]
+# show a table with the frequency of frequencies
+data %>%
+  # seconds since the beginning
+  mutate(secs_since = as.numeric(dttz - min(dttz))) %>%
+  # group into within-seconds blocks
+  group_by(secs_since) %>%
+  # frequency and period of sampling
+  dplyr::mutate(freq = n()) %>%
+  ungroup %>%
+  {table(.$freq)} -> freqCount
+# Count of number of occurrances of each freq
+freqCount / as.numeric(names(freqCount))
+# Percentage of total of each freq
+format((freqCount / as.numeric(names(freqCount)))/sum((freqCount / as.numeric(names(freqCount)))),scientific=FALSE)
+
+# Find the actual number of samples that will be interpolated
+frequencies <- data.frame(freqCount)
+frequencies$samplingRate <- as.numeric(names(freqCount))
+
+frequencies <- frequencies %>% 
+  mutate(samplesInterpolated = case_when(
+    samplingRate < resampleRate ~ (resampleRate-samplingRate)*(Freq/samplingRate),
+    TRUE ~ 0.0),
+    totalSamples = case_when(
+    samplingRate > resampleRate ~ (Freq - Freq/samplingRate),
+    TRUE ~ Freq*1.0)) 
+
+freqSum <- frequencies %>% 
+  summarize(totalInterpoated = sum(samplesInterpolated),
+            totalSamples = sum(totalSamples),
+            # Note: this is in % (i.e. has already been multiplied by 100)
+            percentInterpolated = sum(samplesInterpolated)/sum(totalSamples)*100)
+freqSum
+
+# Create a dataframe with period and frequency 
+data2 <- data %>%
+  # Seconds since the beginning
+  dplyr::mutate(secs_since = as.numeric(dttz - min(dttz))) %>% 
+  # Filter out first and last seconds because they're partial
+  dplyr::filter(secs_since > 0,
+         secs_since < max(secs_since)) %>% 
+  # Reset seconds since the beginning (could just subtract 1?)
+  dplyr::mutate(secs_since = secs_since-1) %>%
+  #mutate(secs_since = as.numeric(dttz - min(dttz))) %>% # JAF: Why is this commented out? Can we delete?
+  # Group into within-seconds blocks
+  dplyr::group_by(secs_since) %>%
+  # Frequency and period of sampling
+  dplyr::mutate(freq = n(),
+                period = 1 / resampleRate,
+                # fraction of a second since beginning of second (i.e. 0-1)
+                frac_sec = (row_number() - 1) / resampleRate,
+                # seconds since beginning (e.g. 9.456)
+                true_since = secs_since + frac_sec) %>%
+  ungroup %>%
+  # Remove any greater than resampleRate 
+  dplyr::filter(frac_sec<=.98) %>%
+  # True time down to fractional second (e.g. 2018-06-07 16:57:12.1234)
+  dplyr::mutate(true_time = min(dttz) + true_since,
+         tsDif = c(0, diff(ts)))
+  
+# Show a table with the frequency of frequencies
+data2$freq %>% table -> freqCount
+freqCount / as.numeric(names(freqCount))
+
+# Create a dataframe with regular sampling
+data3 <- data.frame(true_time = seq(from = min(data2$true_time),
+                               to = max(data2$true_time),
+                               by = 1 / resampleRate)) %>%
+  merge(data2,all=TRUE) #Merge with data2 (fills unmatched with NA)
+
+# Fill name into Newly created NA rows
+data3$name <- data3$name[1]
+
+data3 <- data3[, c("true_time", "name","ts","temp","ax","ay","az","mx","my","mz","freq","secs_since","true_since", "tsDif")]
+colnames(data3)[1] <- c("dttz")
+
+data3$temp <- na.fill(na.approx(data3$temp, data3$dttz, na.rm = FALSE),"extend")
+data3$ax <- na.fill(na.approx(data3$ax, data3$dttz, na.rm = FALSE),"extend")
+data3$ay <- na.fill(na.approx(data3$ay, data3$dttz, na.rm = FALSE),"extend")
+data3$az <- na.fill(na.approx(data3$az, data3$dttz, na.rm = FALSE),"extend")
+data3$mx <- na.fill(na.approx(data3$mx, data3$dttz, na.rm = FALSE),"extend")
+data3$my <- na.fill(na.approx(data3$my, data3$dttz, na.rm = FALSE),"extend")
+data3$mz <- na.fill(na.approx(data3$mz, data3$dttz, na.rm = FALSE),"extend")
+data3$true_since <- na.fill(na.approx(data3$true_since, data3$dttz, na.rm = FALSE),"extend")
+
+# Check results
+origP <- data2 %>%
+  dplyr::slice(1e6:(1e6+200)) %>%
+  ggplot(aes(x = true_time,
+             y = ax)) +
+  geom_line() +
+  geom_point(size = 1) +
+  labs(title = 'Original data')
+
+time_rng <- range(data2$true_time[1e6:(1e6+200)])
+
+rediscP <- data3 %>%
+  dplyr::filter(between(dttz, time_rng[1], time_rng[2])) %>%
+  ggplot(aes(x = dttz,
+             y = ax)) +
+  geom_line() +
+  geom_point(size = 1) +
+  labs(title = 'Rediscretized data')
+ggarrange(origP,rediscP,nrow=2)
+
+# Save as .RData file
+deploymentName <- accdata$name[1]
+save(data3, file=paste(deploymentName,"-",resampleRate,"HZ",".RData",sep=""))
+
+data <- data3
+
+# Clean global environment
+rm(accdata)
+rm(data2)
+rm(data3)
+rm(freqSum)
+rm(frequencies)
+rm(origP)
+rm(rediscP)
+rm(freqCount)
+rm(plotLength)
+rm(resampleRate)
+rm(time_rng)
+```
+
+5. Calculate and extract calibration values
+```{r}
+# Create a deployment ID to be used in calibration functions
+depid <- basename(filename)
+depid <- strsplit(depid,'-')
+depid <- depid[[1]][2]
+
+# Transform axes to North East Up sensor orientation used in Tag Tools 
+# Acc	 [x -y z]
+data$axT <- data$ax * (1.0)
+data$ayT <- data$ay * (-1.0)
+data$azT <- data$az * (1.0)
+# Create a matrix with Acc data
+At <- cbind(data$axT,data$ayT,data$azT)
+# Check for NA
+#count(is.na(At))
+sum(is.na(At))
+# If NAs, remove using linear approximation
+if(sum(is.na(At)>0)){
+  Atnarm <- At
+  Atnarm <- na.approx(Atnarm, na.rm = FALSE)
+} else {
+  Atnarm <- At
+}
+# Check again for NAs
+sum(is.na(Atnarm))
+
+# Create an Acc sensor structure using At (NOTE: manually change fs value if not 50)
+Atstruct <- sens_struct(data = Atnarm, fs = 50, depid = depid,type='acc')
+
+# Plot 
+Alist <- list(A = Atstruct$data)
+plott(Alist,50)
+
+# Transform axes to North East Up sensor orientation used in Tag Tools 
+# Mag	 [x -y z]
+data$mxT <- data$mx * 1.0
+data$myT <- data$my * (-1.0)
+data$mzT <- data$mz * 1.0
+
+# Create a matrix with Mag data
+Mt <- cbind(data$mxT,data$myT,data$mzT)
+# Check for NA
+sum(is.na(Mt))
+# If NAs, remove using linear approximation
+if(sum(is.na(Mt))>0){
+  Mtnarm <- Mt
+  Mtnarm <- na.approx(Mtnarm, na.rm = FALSE)
+} else {
+  Mtnarm <- Mt
+}
+# Check again for NAs
+sum(is.na(Mtnarm))
+# Create an Mag sensor structure using Mt (NOTE: manually change fs value if not 50)
+Mtstruct <- sens_struct(data = Mtnarm, fs = 50, depid = depid,type='mag')
+# Plot 
+Mlist <- list(M = Mtstruct$data)
+plott(Mlist,50)
+
+# Atnarm[nrow(Atnarm),]<- Atnarm[(nrow(Atnarm)-1),]
+# Mtnarm[nrow(Mtnarm),]<- Mtnarm[(nrow(Mtnarm)-1),]
+
+Acrop <- crop(Atstruct$data, Atstruct$sampling_rate)
+
+# Plot 
+list <- list(A = Acrop$Y)
+plott(list,50)
+Acrop <- crop(Acrop$Y, Atstruct$sampling_rate)
+
+# Run Spherical Cal
+AccCal <- spherical_cal(Acrop$Y, n = 9.81, method = 'cross') # Changed this from NULL on 3/13/20
+
+## Magnetometer Calibration
+Mcrop <- crop(Mtstruct$data, sampling_rate = 50)
+# Plot 
+list <- list(M = Mcrop$Y)
+plott(list,50)
+Mcrop <- crop(Mcrop$Y, Mtstruct$sampling_rate)
+
+# Input the magnetic Field Strength for the location
+# https://www.ngdc.noaa.gov/geomag-web/#igrfwmm
+# NOTE: website provides data in nano teslas, need to divide by 1000 
+# 28281.1 / 1000 = 28.2811
+# 47974.5 / 1000 = 47.9745
+fieldStrength <- 49.58
+MagCal <- spherical_cal(Mcrop$Y, n = fieldStrength, method = NULL)
+
+
+#Compute field intensity of acceleration and magnetometer data, 
+#and the inclination angle of the magnetic field. This is useful for 
+#checking the quality of a calibration, for detecting drift, and for 
+#validating the mapping of the sensor axes to the tag axes.
+AMcheck <- check_AM(A=AccCal$Y,M= MagCal$Y,fs=50)
+# If it's a good calibration the mean should be around 9.81 ms2- 
+list <- list(A = AMcheck$fstr)
+plott(list,50)
+
+Ac <- apply_cal(Atnarm,cal = AccCal$G, T = NULL)
+list <- list(A = Ac)
+plott(list,50)
+
+# Combine calibration estimations into one dataframe
+cal <-data.frame(cbind(AccCal$G$poly,AccCal$G$cross,MagCal$G$poly,MagCal$G$cross))
+colnames(cal) <-c("AccPoly1","AccPoly2","AccCross1","AccCross2","AccCross3",
+                  "MagPoly1","MagPoly2","MagCross1","MagCross2","MagCross3")
+cal
+write.csv(cal, file=paste0(depid,".csv"),row.names=FALSE)
+```
+
+
+
+
+
+

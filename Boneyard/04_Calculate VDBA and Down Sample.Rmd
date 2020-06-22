@@ -1,0 +1,979 @@
+---
+title: "Calculate VDBA and Down Sample"
+author: "Katie Harrington"
+date: "March 2, 2020"
+output: html_document
+---
+Set up environment
+```{r}
+# Set the Timezone Offset from UTC 
+tzOffset <- "Etc/GMT+3" # Falklands time in the winter
+# Set the Working Directory to the location of this File
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path ))
+rm(current_path)
+getwd()
+# This function loads required packages and installs them if they are not found
+pkgTest <- function(x)
+{
+  if (!require(x,character.only = TRUE))
+  {
+    install.packages(x,dep=TRUE)
+    if(!require(x,character.only = TRUE)) stop("Package not found")
+  }
+}
+# Load Packages
+pkgTest("tidyverse")
+pkgTest("ggplot2")
+pkgTest("lubridate")
+pkgTest("leaflet")
+pkgTest("htmlwidgets")
+pkgTest("argosfilter")
+pkgTest("zoo")
+pkgTest("dplyr")
+pkgTest("tagtools")
+pkgTest("plotly")
+pkgTest("RcppRoll")
+pkgTest("car")
+pkgTest("gridExtra")
+pkgTest("signal")
+pkgTest("ggpubr")
+pkgTest("ggmap")
+pkgTest("maps")
+pkgTest("mapdata")
+pkgTest("maptools")
+pkgTest("sp")
+
+# Will need GPS data extracted from TWLogger to set Lat/Long
+load("TWgps.RData")
+# Or manually set Lat/Long if logger did not record GPS positions
+# dataset$long <- -61.31
+# dataset$lat <- -51.75
+
+# Finds Sunrise and sunset times
+source("../Global Functions/find_Astronomical.R")
+ # Finds Point to Point metrics
+source("../Global Functions/pt2pt_fxns.R")
+```
+
+Select data to import
+NOTE: Acc data is in ms-2
+```{r}
+load("Dataset-24hr.RData")
+# Remove unused columns
+dataset <- subset(dataset, select = -c(fs,ts,dt,Mx,My,Mz,secs_since,tsDif))
+# Reorder columns
+dataset <- dataset[,c("depid","ID","dttz","true_since","Ax","Ay","Az")]
+```
+
+Extract deployment date to calculate astronomical periods
+*Do not need to redo this
+```{r}
+# Only need to create depSumTW and astro_data once
+depSumTW <- dataset %>% 
+  group_by(depid) %>% 
+  summarize(depDate = first(dttz)) # Creates table with deployment date
+depSumTW$lat <- mean(TWgps$lat)
+depSumTW$long <- mean(TWgps$long)
+#Find Sunrise and sunset times
+astro_data <- find_Astronomical(depSumTW$long,
+                                depSumTW$lat,
+                                depSumTW$depDate)
+astro_data$long <- NULL
+astro_data$lat <- NULL
+depSumTW <- cbind(depSumTW,astro_data)
+
+# Create SolarMidnight based hourly bins
+depSumTW$solarMidnight <- hms::as.hms((depSumTW$solarnoon- dhours(12)),tz = tzOffset)
+depSumTW$dawnT <- (hour(depSumTW$dawn) + minute(depSumTW$dawn)/60) - (hour(depSumTW$solarMidnight) + minute(depSumTW$solarMidnight)/60)
+depSumTW$duskT <- hour(depSumTW$dusk) + minute(depSumTW$dusk)/60 - (hour(depSumTW$solarMidnight) + minute(depSumTW$solarMidnight)/60)
+
+# Save as an RData file
+# save(astro_data, file=paste0("astro_data", ".RData"))
+# save(depSumTW, file=paste0("depSumTW", ".RData"))
+```
+
+Add depSumTW variables (calculated in previous step)
+```{r}
+# Load depSumTW and astro_data if previously calculated
+load("depSumTW.RData")
+dataset <- left_join(dataset,dplyr::select(depSumTW,depid,srise:dusk,solarMidnight:duskT), by = "depid")
+rm(TWgps)
+```
+
+Calculate astronomical periods
+```{r}
+dataset$astronomical <- ifelse(hms::as.hms(dataset$dttz, tz=attr(dataset$dttz, "tzone")) > hms::as.hms(dataset$srise, tz=attr(dataset$dttz, "tzone")) & hms::as.hms(dataset$dttz, tz=attr(dataset$dttz, "tzone")) < hms::as.hms(dataset$sset, tz=attr(dataset$dttz, "tzone")),'day', 
+                              ifelse(hms::as.hms(dataset$dttz, tz=attr(dataset$dttz, "tzone")) < hms::as.hms(dataset$srise, tz=attr(dataset$dttz, "tzone")) & hms::as.hms(dataset$dttz, tz=attr(dataset$dttz, "tzone")) > hms::as.hms(dataset$dawn, tz=attr(dataset$dttz, "tzone")),'dawn',
+                                     ifelse(hms::as.hms(dataset$dttz, tz=attr(dataset$dttz, "tzone")) < hms::as.hms(dataset$dusk, tz=attr(dataset$dttz, "tzone")) & hms::as.hms(dataset$dttz, tz=attr(dataset$dttz, "tzone")) > hms::as.hms(dataset$sset, tz=attr(dataset$dttz, "tzone")) ,'dusk','night')))
+# Remove unused columns
+dataset$srise <-NULL
+dataset$sset <- NULL
+dataset$dawn <- NULL
+dataset$dusk <- NULL
+```
+
+Calculate metrics (ODBA & VDBA)
+*Skip to replicate original analysis
+```{r}
+# Set sampling rate
+fs <- 50
+# Calculate static (running mean)
+windowSize=fs*3  # 2-sec window 
+dataset <- dataset %>% 
+  arrange(ID,dttz) %>% 
+  group_by(ID) %>% 
+  mutate(static_Ax=roll_mean(Ax,windowSize,fill=NA),
+         static_Ay=roll_mean(Ay,windowSize,fill=NA),
+         static_Az=roll_mean(Az,windowSize,fill=NA)) %>%
+  ungroup
+# Replace the NA's at the beginning with the first good value
+dataset <- dataset %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>%
+  mutate(naUp = ifelse(row_number()<=windowSize/2,1,0),
+         naDown = ifelse(row_number() > n() - (windowSize/2+1),1,0)) %>% #View
+  ungroup %>% 
+  group_by(ID,naUp) %>% 
+  mutate(static_Ax = ifelse(naUp == 1,last(static_Ax),static_Ax),
+         static_Ay = ifelse(naUp == 1,last(static_Ay),static_Ay),
+         static_Az = ifelse(naUp == 1,last(static_Az),static_Az)) %>% 
+  ungroup %>% 
+  group_by(ID,naDown) %>% 
+  mutate(static_Ax = ifelse(naDown == 1,first(static_Ax),static_Ax),
+         static_Ay = ifelse(naDown == 1,first(static_Ay),static_Ay),
+         static_Az = ifelse(naDown == 1,first(static_Az),static_Az)) %>% 
+  ungroup
+dataset$naUp <- NULL
+dataset$naDown <- NULL
+# Calculate dynamic (raw minus static) and DBA
+dataset <- dataset %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>% 
+  mutate(dyn_Ax=Ax-static_Ax,
+         dyn_Ay=Ay-static_Ay,
+         dyn_Az=Az-static_Az,
+         ODBA=sum(abs(dyn_Ax)+abs(dyn_Ay)+abs(dyn_Az)),
+         VDBA=sqrt(dyn_Ax^2+dyn_Ay^2+dyn_Az^2)) %>% 
+  ungroup #%>% View
+dataset$VDBA <- dataset$VDBA/9.81
+dataset$ODBA <- dataset$ODBA/9.81
+dataset <- subset(dataset, select = -c(static_Ax,static_Ay,static_Az,dyn_Ax,dyn_Ay,dyn_Az))
+# Check for NAs
+sapply(dataset, function(x) sum(is.na(x)))
+# Clean up environment
+rm(windowSize)
+rm(fs)
+```
+
+Down sample (use this if dataset already includes ODBA & VDBA)
+*Skip to replicate original analysis
+
+Old down sampling process (uses decimate function)
+```{r}
+# Down sample data (decimate each vector separately)
+df <- 50 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# Create empty dataframe
+dataset_down = data.frame()
+
+# To test on one individual set i=1 
+for(i in 1:length(unique(dataset$depid))) {
+  # Create a temporary subset containing only one individual
+  # Unique(dataset$depid)[i] iteratively selects a unique depid to subset by and process
+  temp_sub <- dataset[dataset$depid==unique(dataset$depid)[i],] # Or can use pipe with dplyr::filter(depid==depid[i])
+  # Remove unused columns
+  temp_sub <- subset(temp_sub, select = -c(Ax,Ay,Az,astronomical,solarMidnight,dawnT,duskT,time,hr,timeBin,dayNight))
+
+  # For datetime select every nth value
+  dttz <- temp_sub$dttz
+  a <- dttz
+  dttz_down <- a[seq(1, length(a), df)]
+  
+  # For true_since select every nth value
+  true_since <- temp_sub$true_since
+  a <- true_since
+  true_since_down <- a[seq(1, length(a), df)]
+  
+  # Down sample ODBA
+  o <- temp_sub$ODBA
+  o_mat <- matrix(o,ncol=1)
+  # Use v_mat
+  o_down <- decimate(o_mat,df,ftype="fir")
+
+  # Down sample VDBA
+  v <- temp_sub$VDBA
+  v_mat <- matrix(v,ncol=1)
+  # Use v_mat
+  v_down <- decimate(v_mat,df,ftype="fir")
+  
+  # Combine down sampled data into one dataframe
+  temp_down <- cbind.data.frame(dttz_down,true_since_down,o_down,v_down)
+  temp_down$depid <- temp_sub$depid[1]
+  temp_down$season <- temp_sub$season[1]
+  temp_down$yr <- temp_sub$yr[1]
+  # Change column names to more practical shorter names
+  colnames(temp_down)[1:6] <- c("dttz","true_since","odba","vdba","depid","season","yr")
+  # Reorder columns
+  temp_down <- temp_down[,c("depid","dttz","true_since","odba","vdba","season","yr")]
+  # Combine into Dataset
+  # Adds first iteration to empty dataframe then row binds after that in order not to replace what's already there
+  if(i==1) dataset_down <- temp_down else dataset_down <- rbind(dataset_down,temp_down)
+} 
+```
+
+New down sampling process (uses mean)
+Downsample using mean of frequencies
+```{r}
+# Remove unnecessary columns (and replace them later)
+dataset <- subset(dataset, select = -c(true_since,Ax,Ay,Az,solarMidnight,dawnT,duskT,astronomical,ODBA))
+i=1
+# Down sample to 1Hz
+for(i in 1:length(unique(dataset$depid))) {
+  # Create a temporary subset containing only one individual
+  temp_sub <- dataset[dataset$depid==unique(dataset$depid)[i],]
+  # Perform functions on temporary subset
+  temp_sub <- temp_sub %>% 
+    dplyr::mutate(secs_since = as.numeric(dttz - min(dttz))) %>% # seconds since start of deployment View
+    ungroup
+if(i==1) data <- temp_sub else data <- rbind(data,temp_sub)
+} 
+# check for NAs
+sapply(data, function(x) sum(is.na(x)))
+# Calculate mean VDBA (down sample from 50 to 1Hz)
+dataset_1 <- data %>% 
+  group_by(depid,ID, dttz,secs_since) %>%
+  summarize(VDBA = mean(VDBA))
+# dataset_1$ID <- substr(dataset_5$depid,1,3)
+dataset_1$secs_since <- NULL
+rm(data)
+rm(temp_sub)
+
+B50_1hz <- dataset_1
+
+# Down sample to 5Hz
+i=1
+for(i in 1:length(unique(dataset$depid))) {
+  # Create a temporary subset containing only one individual
+  temp_sub <- dataset[dataset$depid==unique(dataset$depid)[i],]
+  # Perform functions on temporary subset
+  temp_sub <- temp_sub %>% 
+    dplyr::mutate(secs_since = as.numeric(dttz - min(dttz))) %>% # seconds since start of deployment View
+    dplyr::mutate(frac_sec = (row_number() - 1) / fs, # seconds since beginning (e.g. 9.4) 
+                  dec = round(frac_sec%%1,2)) %>% # extracts decimal
+    ungroup %>%
+    dplyr::mutate(bin_5hz = ifelse(dec<0.2,1,
+                                   ifelse(dec>=0.2 & dec<0.4,2,
+                                          ifelse(dec>=0.4 & dec<0.6,3,
+                                                 ifelse(dec>=0.6 & dec<0.8,4,
+                                                        ifelse(dec>=0.8 & dec<1,5,6))))),
+                  hz5 = paste0(secs_since,"-",bin_5hz))
+  # Combine into Dataset
+  # Adds first iteration to empty dataframe then row binds after that in order not to replace what's already there
+  if(i==1) data <- temp_sub else data <- rbind(data,temp_sub)
+} 
+# check for NAs
+sapply(data, function(x) sum(is.na(x)))
+# Calculate mean VDBA (down sample from 50 to 5Hz)
+dataset_5 <- data %>% 
+  group_by(depid,ID,dttz,hz5) %>%
+  summarize(VDBA = mean(VDBA))
+dataset_5$hz5 <- NULL
+rm(data)
+
+B50_5hz <- dataset_5
+# Down sample to 10Hz
+data <- data.frame()
+i=1
+for(i in 1:length(unique(dataset$depid))) {
+  # Create a temporary subset containing only one individual
+  temp_sub <- dataset[dataset$depid==unique(dataset$depid)[i],]
+  # Perform functions on temporary subset
+  temp_sub <- temp_sub %>% 
+    dplyr::mutate(secs_since = as.numeric(dttz - min(dttz))) %>% # seconds since start of deployment View
+    dplyr::mutate(frac_sec = (row_number() - 1) / fs, # seconds since beginning (e.g. 9.4) 
+                  dec = round(frac_sec%%1,2)) %>% # extracts decimal
+    ungroup %>%
+    dplyr::mutate(bin_10hz = ifelse(dec<0.1,1,
+                                   ifelse(dec>=0.1 & dec<0.2,2,
+                                          ifelse(dec>=0.2 & dec<0.3,3,
+                                                 ifelse(dec>=0.3 & dec<0.4,4,
+                                                        ifelse(dec>=0.4 & dec<0.5,5,
+                                                               ifelse(dec>=0.5 & dec<0.6,6,
+                                                                      ifelse(dec>=0.6 & dec<0.7,7,
+                                                                             ifelse(dec>=0.7 & dec<0.8,8,
+                                                                                    ifelse(dec>=0.8 & dec<0.9,9,
+                                                                                           ifelse(dec>=0.9 & dec<1,10,11)))))))))),
+                  hz10 = paste0(secs_since,"-",bin_10hz))
+  # Combine into Dataset
+  # Adds first iteration to empty dataframe then row binds after that in order not to replace what's already there
+  if(i==1) data <- temp_sub else data <- rbind(data,temp_sub)
+}
+# check for NAs
+sapply(data, function(x) sum(is.na(x)))
+# Calculate mean VDBA (down sample from 50 to 10Hz)
+dataset_10 <- data %>% 
+  group_by(depid,ID,dttz,hz10) %>% 
+  summarize(VDBA = mean(VDBA))
+dataset_10$hz10 <- NULL
+rm(data) 
+B50_10hz <- dataset_10
+```
+
+Check to make sure all down sampling worked
+```{r}
+# Create a dataframe with period and frequency 
+test <- data %>%
+  # group into within-seconds blocks
+  dplyr::group_by(hz5) %>%
+  # frequency and period of sampling
+  dplyr::mutate(freq = n()) %>%
+  ungroup
+# show a table with the frequency of frequencies
+test$freq %>% table -> freqCount
+```
+
+Save data
+```{r}
+save(dataset_1hz, file=paste0("dataset_1hz", ".RData"))
+```
+
+Add covariates
+```{r,warning=FALSE}
+# Determine season (calculated from 2018 solstices and equinoxes)
+dataset$yday <- yday(dataset$dttz)
+dataset$season <- rep('NA')
+#dataset[which(dataset$yday > 79 & dataset$yday <= 173),]$season <- 'Fall'
+dataset[which(dataset$yday > 173 & dataset$yday <= 265),]$season <- 'Winter'
+#dataset[which(dataset$yday > 265 & dataset$yday < 355),]$season <- 'Spring'
+dataset[which(dataset$yday >= 355 | dataset$yday <= 79),]$season <- 'Summer'
+dataset$season <- as.factor(dataset$season)
+unique(dataset$season)
+dataset$yday <- NULL
+dataset$time <- hms::as.hms(dataset$dttz,tz = tzOffset)
+dataset$timeBin <- floor(as.numeric(difftime(dataset$time, dataset$solarMidnight,units = "hours")))
+dataset$timeBin <- ifelse(dataset$timeBin < 0,dataset$timeBin+24,dataset$timeBin)
+dataset$hr <- hour(dataset$dttz)
+dataset$yr <- year(dataset$dttz)
+
+# Consolidate astronomical periods two periods (day and night)
+dataset <- dataset %>% 
+  group_by(season, ID) %>% 
+  mutate(dayNight = ifelse(astronomical %in% c("dawn","day","dusk"),"day","night")) %>%
+  ungroup
+
+# Save as .RData file
+# save(dataset, file=paste0("Dataset-VDBAcovar", ".RData"))
+```
+
+Clean environment
+```{r}
+rm(a)
+rm(a2)
+rm(a3)
+rm(a4)
+rm(temp_down)
+rm(temp_sub)
+rm(dttz)
+rm(dttz_down)
+rm(true_since)
+rm(true_since_down)
+rm(v)
+rm(v_mat)
+rm(v_down)
+```
+
+Down sample to 1-Hz (use this if data does not already include ODBA & VDBA)
+*Replicates original analysis
+```{r}
+# Down sample data (decimate each vector separately)
+df <- 50 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# Create empty dataframe
+dataset_down = data.frame()
+
+# To test on one individual set i=1 
+for(i in 1:length(unique(dataset$depid))) {
+  # Create a temporary subset containing only one individual
+  # Unique(dataset$depid)[i] iteratively selects a unique depid to subset by and process
+  temp_sub <- dataset[dataset$depid==unique(dataset$depid)[i],] # Or can use pipe with dplyr::filter(depid==depid[i])
+  # Remove unused columns
+  temp_sub <- subset(temp_sub, select = -c(astronomical,solarMidnight,dawnT,duskT,time,hr,timeBin,dayNight))
+  # For datetime select every nth value
+  dttz <- temp_sub$dttz
+  a <- dttz
+  dttz_down <- a[seq(1, length(a), df)]
+    # For true_since select every nth value
+  true_since <- temp_sub$true_since
+  a <- true_since
+  true_since_down <- a[seq(1, length(a), df)]
+  # Create individual vectors from acc fields
+  Ax <- temp_sub$Ax
+  Ay <- temp_sub$Ay
+  Az <- temp_sub$Az
+  # Convert vectors to numeric matrix
+  Ax_mat <- matrix(Ax,ncol=1)
+  Ay_mat <- matrix(Ay,ncol=1)
+  Az_mat <- matrix(Az,ncol=1)
+  # Use decimate function
+  Ax_down <- decimate(Ax_mat,df,ftype="fir")
+  Ay_down <- decimate(Ay_mat,df,ftype="fir")
+  Az_down <- decimate(Az_mat,df,ftype="fir")
+  # Combine down sampled data into one dataframe
+  temp_down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
+  temp_down$depid <- temp_sub$depid[1]
+  temp_down$season <- temp_sub$season[1]
+  temp_down$yr <- temp_sub$yr[1]
+  # Change column names to more practical shorter names
+  colnames(temp_down)[1:8] <- c("dttz","true_since","Ax","Ay","Az","depid","season","yr")
+  # Reorder columns
+  temp_down <- temp_down[,c("depid","dttz","true_since","Ax","Ay","Az","season","yr")]
+  # Combine into Dataset
+  # Adds first iteration to empty dataframe then row binds after that in order not to replace what's already there
+  if(i==1) dataset_down <- temp_down else dataset_down <- rbind(dataset_down,temp_down)
+} 
+
+rm(Ax)
+rm(Ay)
+rm(Az)
+rm(Ax_down)
+rm(Ay_down)
+rm(Az_down)
+rm(Ax_mat)
+rm(Ay_mat)
+rm(Az_mat)
+```
+
+Calculate ODBA & VDBA over 10-sec window
+*Replicates original analysis
+```{r}
+dataset <- dataset_down
+
+# Set sampling rate
+fs <- 1
+# Calculate static (running mean)
+windowSize=fs*11  # 10-sec window 
+dataset <- dataset %>% 
+  arrange(depid,dttz) %>% 
+  group_by(depid) %>% 
+  mutate(static_Ax=roll_mean(Ax,windowSize,fill=NA),
+         static_Ay=roll_mean(Ay,windowSize,fill=NA),
+         static_Az=roll_mean(Az,windowSize,fill=NA)) %>%
+  ungroup
+# Replace the NA's at the beginning with the first good value
+dataset <- dataset %>%
+  arrange(depid,dttz) %>%
+  group_by(depid) %>%
+  mutate(naUp = ifelse(row_number()<=(windowSize+1)/2,1,0),
+         naDown = ifelse(row_number() > n() - ((windowSize+1)/2),1,0)) %>% #View
+  ungroup %>% 
+  group_by(depid,naUp) %>% 
+  mutate(static_Ax = ifelse(naUp == 1,last(static_Ax),static_Ax),
+         static_Ay = ifelse(naUp == 1,last(static_Ay),static_Ay),
+         static_Az = ifelse(naUp == 1,last(static_Az),static_Az)) %>% 
+  ungroup %>% 
+  group_by(depid,naDown) %>% 
+  mutate(static_Ax = ifelse(naDown == 1,first(static_Ax),static_Ax),
+         static_Ay = ifelse(naDown == 1,first(static_Ay),static_Ay),
+         static_Az = ifelse(naDown == 1,first(static_Az),static_Az)) %>% 
+  ungroup
+dataset$naUp <- NULL
+dataset$naDown <- NULL
+# Calculate dynamic (raw minus static) and DBA
+dataset <- dataset %>%
+  arrange(depid,dttz) %>%
+  group_by(depid) %>% 
+  mutate(dyn_Ax=Ax-static_Ax,
+         dyn_Ay=Ay-static_Ay,
+         dyn_Az=Az-static_Az,
+         ODBAb=abs(dyn_Ax+dyn_Ay+dyn_Az),
+         ODBA=sum(abs(dyn_Ax)+abs(dyn_Ay)+abs(dyn_Az)),
+         VDBA=sqrt(dyn_Ax^2+dyn_Ay^2+dyn_Az^2)) %>% 
+  ungroup #%>% View
+dataset$VDBA <- dataset$VDBA/9.81
+dataset$ODBA <- dataset$ODBA/9.81
+dataset <- subset(dataset, select = -c(static_Ax,static_Ay,static_Az,dyn_Ax,dyn_Ay,dyn_Az))
+# Check for NAs
+sapply(dataset, function(x) sum(is.na(x)))
+# Clean up environment
+rm(windowSize)
+rm(fs)
+```
+
+Confirm sampling rate
+```{r}
+# dataset_down %>%
+#   dplyr::filter(depid=="Z59-20190221") %>%
+#   # seconds since the beginning
+#   mutate(secs_since = as.numeric(dttz - min(dttz))) %>%
+#   # group into within-seconds blocks
+#   # ungroup %>%
+#   group_by(secs_since) %>%
+#   # frequency and period of sampling
+#   dplyr::mutate(freq = n()) %>%
+#   ungroup %>%
+#   {table(.$freq)} -> freqCount
+# # Count of number of occurrances of each freq
+# freqCount / as.numeric(names(freqCount))
+# # Percentage of total of each freq
+# format((freqCount / as.numeric(names(freqCount)))/sum((freqCount / as.numeric(names(freqCount)))),scientific=FALSE)
+```
+
+Q0: Is there a seasonal difference in 24hr ODBA?
+```{r sumODBA, warning=FALSE}
+# Calculate 24-h ODBA (gravitational g) per ID
+sumODBA <- dataset %>% 
+  group_by(yr,season,depid) %>%
+  summarize(sumODBA = sum(ODBAb,na.rm = TRUE))
+# Create summer subset
+sumODBASU <- sumODBA %>% 
+  group_by(depid,season,yr) %>%
+  dplyr::filter(season == "Summer") 
+# Create winter subset
+sumODBAWI <- sumODBA %>% 
+  group_by(depid,season,yr) %>%
+  dplyr::filter(season == "Winter") 
+```
+
+Test for seasonal difference in 24hr ODBA (gravitational g) using a randomized block ANOVA.
+```{r VDBAtest, warning=FALSE}
+shapiro.test(sumODBA$sumODBA)
+var.test(sumODBA ~ season,data=sumODBA)
+a2 <- lm(sumODBA~season+yr, data=sumODBA)
+anova(a2)
+a3 <- aov(sumODBA~season+yr, data=sumODBA)
+summary(a3)
+TukeyHSD(a3)
+a4 <- aov(sumODBA~season,data=sumODBA[sumODBA$yr>2017,])
+summary(a4)
+test <- t.test(sumODBA ~ season,data=sumODBA,var.equal = TRUE)
+test
+```
+
+Q1: Is there a seasonal difference in 24hr VDBA?
+```{r sumODBA, warning=FALSE}
+# Calculate 24-h ODBA (gravitational g) per ID
+sumVDBA <- dataset %>% 
+  group_by(yr,season,ID) %>%
+  summarize(sumVDBA = sum(VDBA,na.rm = TRUE))
+# Create summer subset
+sumVDBASU <- sumVDBA %>% 
+  group_by(ID,season,yr) %>%
+  dplyr::filter(season == "Summer") 
+# Create winter subset
+sumVDBAWI <- sumVDBA %>% 
+  group_by(ID,season,yr) %>%
+  dplyr::filter(season == "Winter") 
+```
+
+Test for seasonal differences in 24hr VDBA (gravitational g) using a randomized block ANOVA.
+```{r VDBAtest, warning=FALSE}
+shapiro.test(sumVDBA$sumVDBA)
+var.test(sumVDBA ~ season,data=sumVDBA)
+a2 <- lm(sumVDBA~season+yr, data=sumVDBA)
+anova(a2)
+a3 <- aov(sumVDBA~season+yr, data=sumVDBA)
+summary(a3)
+TukeyHSD(a3)
+a4 <- aov(sumVDBA~season,data=sumVDBA[sumVDBA$yr>2017,])
+summary(a4)
+test <- t.test(sumVDBA ~ season,data=sumVDBA,var.equal = TRUE)
+test
+```
+
+Plot hourly VDBA by season. Creates snake swallowed elephant plot.
+```{r VDBAplot, warning=FALSE}
+# Meanline summer
+meanlineSU <- dataset %>%
+  dplyr::filter(season == "Summer") %>%
+  group_by(ID, timeBin) %>%
+  summarize(sumVDBA = sum(VDBA,na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(timeBin) %>% 
+  summarize(meanVDBA = mean(sumVDBA))
+# Meanline winter
+meanlineWI <- dataset %>%
+  dplyr::filter(season == "Winter") %>%
+  group_by(ID, timeBin) %>%
+  summarize(sumVDBA = sum(VDBA,na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(timeBin) %>% 
+  summarize(meanVDBA = mean(sumVDBA))
+
+# KJH: redo these according to ylim below
+# Create dataframes to use for shading bins in total daily ODBA plot
+shadeSU = data.frame(x1=c(0,mean(unique(dataset$duskT[dataset$season == "Summer"]))),
+                     x2=c(mean(unique(dataset$dawnT[dataset$season == "Summer"])),23),
+                     y1=c(0,0),
+                     y2=c(800,800))
+shadeWI = data.frame(x1=c(0,mean(unique(dataset$duskT[dataset$season == "Winter"]))),
+                     x2=c(mean(unique(dataset$dawnT[dataset$season == "Winter"])),23),
+                     y1=c(0,0),
+                     y2=c(800,800))
+
+# Summer total VDBA per solar hour
+pVDBA24SU <- dataset %>%
+  dplyr::filter(season == "Summer") %>% #View
+  group_by(ID, timeBin,dayNight) %>%
+  summarize(sumVDBA = sum(VDBA,na.rm = TRUE)) %>% 
+  ggplot() +
+  geom_line(aes(x=timeBin, y=sumVDBA, group=ID),alpha=0.7) +
+  geom_line(data=meanlineSU,aes(x=timeBin, y=meanVDBA),color="black",size=1.5) +
+  scale_y_continuous(breaks = seq(0,80000, by = 10000), expand = c(0, 0)) +
+  scale_x_continuous(breaks = seq(0,23, by = 1),expand = c(0, 0)) +
+  labs(x="Solar Hour",
+       y = NULL) + 
+  # geom_rect(data=shadeSU, mapping=aes(xmin=x1, xmax=x2, ymin=y1, ymax=y2), color='grey', alpha=0.5) +
+  # annotate("text", x = 0.75, y = 740, label = "B. Summer", color="white", hjust = 0) +
+  theme_classic(base_size = 13)
+# pVDBA24SU
+
+# Winter total VDBA per solar hour
+pVDBA24WI <- dataset %>%
+  dplyr::filter(season == "Winter") %>% #View
+  group_by(ID, timeBin) %>%
+  summarize(sumVDBA = sum(VDBA,na.rm = TRUE)) %>% 
+  ggplot() +
+  geom_line(aes(x=timeBin, y=sumVDBA, group=ID),alpha=0.7)+
+  geom_line(data=meanlineWI,aes(x=timeBin, y=meanVDBA),color="black",size=1.5) +
+  scale_y_continuous(breaks = seq(0,80000, by = 10000), expand = c(0, 0)) +
+  scale_x_continuous(breaks = seq(0,23, by = 1),expand = c(0, 0)) +
+  labs(x=NULL,
+       y = NULL) + 
+  # geom_rect(data=shadeWI, mapping=aes(xmin=x1, xmax=x2, ymin=y1, ymax=y2), color='grey', alpha=0.5) +
+  # annotate("text", x = 0.75, y = 740, label = "A. Winter", color="white",hjust = 0) +
+  theme_classic(base_size = 13)
+# pVDBA24WI
+
+pVDBA24Seas <- ggarrange(pVDBA24WI,pVDBA24SU,nrow=2)
+# pVDBA24Seas <- annotate_figure(pVDBA24Seas,left = text_grob("24-h VDBA (gravitational g)", color = "black", rot = 90))
+
+pVDBA24Seas
+rm(meanlineSU,meanlineWI,pVDBA24WI,pVDBA24SU)
+# Save a file at 300 ppi
+ggsave(pVDBA24Seas, file="Seasonal VDBA per solar hour.png",width=12, height=8,dpi=300)
+```
+
+```{r}
+hist(dataset$VDBA[dataset$yr=="2017"])
+```
+
+Investigating effect of down sampling data on the seasonal signal
+25-Hz
+```{r}
+# Down sample data (decimate each vector separately)
+df <- 2 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# Create empty dataframe
+dataset_down = data.frame()
+
+# To test on one individual set i=1 
+for(i in 1:length(unique(dataset$depid))) {
+  # dataset %>% dplyr::filter(dataset$yr=="2017")
+  # Create a temporary subset containing only one individual
+  # Unique(dataset$depid)[i] iteratively selects a unique depid to subset by and process
+  temp_sub <- dataset[dataset$depid==unique(dataset$depid)[i],] # Or can use pipe with dplyr::filter(depid==depid[i])
+  # Remove unused columns
+  temp_sub <- subset(temp_sub, select = -c(Ax,Ay,Az,astronomical,solarMidnight,dawnT,duskT,time,hr,timeBin,dayNight))
+  # For datetime select every nth value
+  dttz <- temp_sub$dttz
+  a <- dttz
+  dttz_down <- a[seq(1, length(a), df)]
+  # For true_since select every nth value
+  true_since <- temp_sub$true_since
+  a <- true_since
+  true_since_down <- a[seq(1, length(a), df)]
+  # Down sample to VDBA
+  v <- temp_sub$VDBA
+  v_mat <- matrix(v,ncol=1)
+  # Use v_mat
+  v_down <- decimate(v_mat,df,ftype="fir")
+  # Combine down sampled data into one dataframe
+  temp_down <- cbind.data.frame(dttz_down,true_since_down,v_down)
+  temp_down$depid <- temp_sub$depid[1]
+  temp_down$season <- temp_sub$season[1]
+  temp_down$yr <- temp_sub$yr[1]
+  # Change column names to more practical shorter names
+  colnames(temp_down)[1:6] <- c("dttz","true_since","vdba","depid","season","yr")
+  # Reorder columns
+  temp_down <- temp_down[,c("depid","dttz","true_since","vdba","season","yr")]
+  # Combine into Dataset
+  # Adds first iteration to empty dataframe then row binds after that in order not to replace what's already there
+  if(i==1) dataset_down1 <- temp_down else dataset_down1 <- rbind(dataset_down1,temp_down)
+} 
+
+rm(a)
+rm(a2)
+rm(a3)
+rm(a4)
+rm(temp_down)
+rm(temp_sub)
+rm(dttz)
+rm(dttz_down)
+rm(true_since)
+rm(true_since_down)
+rm(v)
+rm(v_mat)
+rm(v_down)
+
+# Check to see if it worked
+dataset_down %>%
+  group_by(depid) %>%
+  # dplyr::filter(depid=="Z59-20190221") %>% 
+  # seconds since the beginning
+  mutate(secs_since = as.numeric(dttz - min(dttz))) %>%
+  # group into within-seconds blocks
+  ungroup %>%
+  group_by(depid,secs_since) %>%
+  # frequency and period of sampling
+  dplyr::mutate(freq = n()) %>%
+  ungroup %>%
+  {table(.$freq)} -> freqCount
+# Count of number of occurrances of each freq
+freqCount / as.numeric(names(freqCount))
+# Percentage of total of each freq
+format((freqCount / as.numeric(names(freqCount)))/sum((freqCount / as.numeric(names(freqCount)))),scientific=FALSE)
+
+dataset_down25 <- dataset_down
+```
+
+10-Hz
+```{r}
+# Down sample data (decimate each vector separately)
+df <- 5 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# Create empty dataframe
+dataset_down = data.frame()
+
+# To test on one individual set i=1 
+for(i in 1:length(unique(dataset$depid))) {
+  # dataset %>% dplyr::filter(dataset$yr=="2017")
+  # Create a temporary subset containing only one individual
+  # Unique(dataset$depid)[i] iteratively selects a unique depid to subset by and process
+  temp_sub <- dataset[dataset$depid==unique(dataset$depid)[i],] # Or can use pipe with dplyr::filter(depid==depid[i])
+  # Remove unused columns
+  temp_sub <- subset(temp_sub, select = -c(Ax,Ay,Az,astronomical,solarMidnight,dawnT,duskT,time,hr,timeBin,dayNight))
+  # For datetime select every nth value
+  dttz <- temp_sub$dttz
+  a <- dttz
+  dttz_down <- a[seq(1, length(a), df)]
+  # For true_since select every nth value
+  true_since <- temp_sub$true_since
+  a <- true_since
+  true_since_down <- a[seq(1, length(a), df)]
+  # Down sample to VDBA
+  v <- temp_sub$VDBA
+  v_mat <- matrix(v,ncol=1)
+  # Use v_mat
+  v_down <- decimate(v_mat,df,ftype="fir")
+  # Combine down sampled data into one dataframe
+  temp_down <- cbind.data.frame(dttz_down,true_since_down,v_down)
+  temp_down$depid <- temp_sub$depid[1]
+  temp_down$season <- temp_sub$season[1]
+  temp_down$yr <- temp_sub$yr[1]
+  # Change column names to more practical shorter names
+  colnames(temp_down)[1:6] <- c("dttz","true_since","vdba","depid","season","yr")
+  # Reorder columns
+  temp_down <- temp_down[,c("depid","dttz","true_since","vdba","season","yr")]
+  # Combine into Dataset
+  # Adds first iteration to empty dataframe then row binds after that in order not to replace what's already there
+  if(i==1) dataset_down <- temp_down else dataset_down <- rbind(dataset_down,temp_down)
+} 
+
+rm(a)
+rm(a2)
+rm(a3)
+rm(a4)
+rm(temp_down)
+rm(temp_sub)
+rm(dttz)
+rm(dttz_down)
+rm(true_since)
+rm(true_since_down)
+rm(v)
+rm(v_mat)
+rm(v_down)
+
+# Check to see if it worked
+dataset_down %>%
+  # group_by(depid) %>%
+  dplyr::filter(depid=="Z59-20190221") %>%
+  # seconds since the beginning
+  mutate(secs_since = as.numeric(dttz - min(dttz))) %>%
+  # group into within-seconds blocks
+  # ungroup %>%
+  group_by(secs_since) %>%
+  # frequency and period of sampling
+  dplyr::mutate(freq = n()) %>%
+  ungroup %>%
+  {table(.$freq)} -> freqCount
+# Count of number of occurrances of each freq
+freqCount / as.numeric(names(freqCount))
+# Percentage of total of each freq
+format((freqCount / as.numeric(names(freqCount)))/sum((freqCount / as.numeric(names(freqCount)))),scientific=FALSE)
+
+dataset_down25 <- dataset_down
+```
+
+1-Hz
+```{r}
+# Down sample data (decimate each vector separately)
+df <- 50 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# Create empty dataframe
+dataset_down = data.frame()
+
+# To test on one individual set i=1 
+for(i in 1:length(unique(dataset$depid))) {
+  # dataset %>% dplyr::filter(dataset$yr=="2017")
+  # Create a temporary subset containing only one individual
+  # Unique(dataset$depid)[i] iteratively selects a unique depid to subset by and process
+  temp_sub <- dataset[dataset$depid==unique(dataset$depid)[i],] # Or can use pipe with dplyr::filter(depid==depid[i])
+  # Remove unused columns
+  temp_sub <- subset(temp_sub, select = -c(Ax,Ay,Az,astronomical,solarMidnight,dawnT,duskT,time,hr,timeBin,dayNight))
+  # For datetime select every nth value
+  dttz <- temp_sub$dttz
+  a <- dttz
+  dttz_down <- a[seq(1, length(a), df)]
+  # For true_since select every nth value
+  true_since <- temp_sub$true_since
+  a <- true_since
+  true_since_down <- a[seq(1, length(a), df)]
+  # Down sample to VDBA
+  v <- temp_sub$VDBA
+  v_mat <- matrix(v,ncol=1)
+  # Use v_mat
+  v_down <- decimate(v_mat,df,ftype="fir")
+  # Combine down sampled data into one dataframe
+  temp_down <- cbind.data.frame(dttz_down,true_since_down,v_down)
+  temp_down$depid <- temp_sub$depid[1]
+  temp_down$season <- temp_sub$season[1]
+  temp_down$yr <- temp_sub$yr[1]
+  # Change column names to more practical shorter names
+  colnames(temp_down)[1:6] <- c("dttz","true_since","vdba","depid","season","yr")
+  # Reorder columns
+  temp_down <- temp_down[,c("depid","dttz","true_since","vdba","season","yr")]
+  # Combine into Dataset
+  # Adds first iteration to empty dataframe then row binds after that in order not to replace what's already there
+  if(i==1) dataset_down <- temp_down else dataset_down <- rbind(dataset_down,temp_down)
+} 
+
+rm(a)
+rm(a2)
+rm(a3)
+rm(a4)
+rm(temp_down)
+rm(temp_sub)
+rm(dttz)
+rm(dttz_down)
+rm(true_since)
+rm(true_since_down)
+rm(v)
+rm(v_mat)
+rm(v_down)
+
+# Check to see if it worked
+dataset_down %>%
+  # group_by(depid) %>%
+  dplyr::filter(depid=="Z59-20190221") %>%
+  # seconds since the beginning
+  mutate(secs_since = as.numeric(dttz - min(dttz))) %>%
+  # group into within-seconds blocks
+  # ungroup %>%
+  group_by(secs_since) %>%
+  # frequency and period of sampling
+  dplyr::mutate(freq = n()) %>%
+  ungroup %>%
+  {table(.$freq)} -> freqCount
+# Count of number of occurrances of each freq
+freqCount / as.numeric(names(freqCount))
+# Percentage of total of each freq
+format((freqCount / as.numeric(names(freqCount)))/sum((freqCount / as.numeric(names(freqCount)))),scientific=FALSE)
+
+dataset_down1 <- dataset_down
+```
+
+Save down sampled RData files
+```{r}
+# Save as .RData file
+save(dataset_down1, file=paste0("dataset_down1", ".RData"))
+save(dataset_down10, file=paste0("dataset_down10", ".RData"))
+save(dataset_down25, file=paste0("dataset_down25", ".RData"))
+save(dataset_50, file=paste0("dataset_50", ".RData"))
+rm(dataset_down1)
+rm(dataset_down10)
+rm(dataset_down25)
+rm(dataset_50)
+
+```
+
+TEST DOWN SAMPLED DATA
+
+This sums VDBA (gravitational g) across 24hr per ID (creates dfs named sumVDBA, sumVDBASU and sumVDBAWI).
+```{r sumODBA, warning=FALSE}
+dataset_down <- dataset_down25
+# Calculate 24-h ODBA (gravitational g) per ID
+sumVDBA <- dataset_down %>% 
+  group_by(yr,season,depid) %>%
+  summarize(sumVDBA = sum(vdba,na.rm = TRUE))
+# Create summer subset
+sumVDBASU <- sumVDBA %>% 
+  group_by(depid,season,yr) %>%
+  dplyr::filter(season == "Summer") 
+# Create winter subset
+sumVDBAWI <- sumVDBA %>% 
+  group_by(depid,season,yr) %>%
+  dplyr::filter(season == "Winter") 
+```
+
+Check for tag versioning effects (tests for differences across years)
+```{r pool, warning=FALSE}
+sumVDBA$yr <-as.factor(sumVDBA$yr)
+sumVDBA$version <-ifelse(sumVDBA$yr==2017,"1","2")
+
+# Plot density distributions
+d <- density(sumVDBA$sumVDBA-mean(sumVDBA$sumVDBA))
+plot(d)
+
+# Test for normality
+shapiro.test(sumVDBA$sumVDBA)
+
+# Test for equal variances
+var.test(sumVDBA ~ version,data=sumVDBA)
+
+# Test for differences within each season by year to confirm pooling
+t.test(sumVDBA ~ version, data=sumVDBA,var.equal = TRUE)
+sd(sumODBA$sumODBA[sumODBA$version=="1"])
+sd(sumODBA$sumODBA[sumODBA$version=="2"])
+
+```
+
+This tests for seasonal differences in 24hr VDBA (gravitational g) using a randomized block ANOVA.
+```{r VDBAtest, warning=FALSE}
+shapiro.test(sumVDBA$sumVDBA)
+var.test(sumVDBA ~ season,data=sumVDBA) # I don't think variances are equal anymore
+
+oneway.test(sumVDBA~season,data=sumVDBA,var.equal=FALSE)
+
+a2 <- lm(sumVDBA~season+yr, data=sumVDBA)
+anova(a2)
+a3 <- aov(sumVDBA~season+yr, data=sumVDBA)
+summary(a3)
+TukeyHSD(a3)
+a4 <- aov(sumVDBA~season,data=sumVDBA[sumVDBA$yr=="2017",])
+summary(a4)
+test <- t.test(sumVDBA ~ season,data=sumVDBA,var.equal = TRUE)
+test
+```
+
+```{r}
+# Create deployment ID
+depid <- strsplit(dataset_down1$depid,'-')
+dataset_down1$new <- substr(dataset_down1$depid,1,3)
+```
+

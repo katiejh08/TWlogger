@@ -1,0 +1,42 @@
+---
+title: "TWLogger Plots"
+author: "James Fahlbusch & Katie Harrington"
+date: "September 27, 2019"
+output: html_document
+---
+
+JAF: I also need to figure out how to create depid when there are multiple individuals involved. For my test, I manually set depid. It's not a huge deal, but it's in the ggtitle and in the file name.
+
+```{r}
+library(tidyverse)
+datax <- load("./00Data/accTW.RData")
+#datax <-accTW # for JAF
+
+
+# Plot successive subsets of data and save to file
+chunkLength <- 30 # Set length (in minutes) of chunks to plot
+fs <- 1 
+# i = 1 # Can set number of plots to print and run for loop from test to p
+
+IDlist = unique(datax$ID)
+
+for(j in 1:length(unique(datax$ID))) {
+  datatemp <- datax %>% 
+    dplyr::filter(ID==IDlist[j])
+  depid <- datatemp$ID[1]
+  for(i in 1:ceiling(nrow(datatemp)/(chunkLength *60*fs))) {
+    test <- datatemp[seq(((i-1)*chunkLength*fs*60)+1,i*chunkLength*fs*60),]
+    p <- test %>%
+      gather(axis, acc, Ax:Az) %>%
+      ggplot(aes(dttz, acc, color = axis)) +
+      geom_line() +
+      theme_classic() +
+      labs(x = "Time", y = "Acceleration") +
+      ggtitle(depid)
+    p
+    # save plots as .png
+    ggsave(p, file=paste(depid,'-',i, ".png", sep=''), scale=2)
+  }
+}
+```
+

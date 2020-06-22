@@ -1,0 +1,134 @@
+---
+title: "Standardize File Outputs"
+author: "Katie Harrington"
+date: "February 29, 2020"
+output: html_document
+---
+Set up environment
+```{r}
+# Set the Timezone Offset from UTC 
+tzOffset <- "Etc/GMT+3" # Falklands time in the winter
+# Set the Working Directory to the location of this File
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path ))
+rm(current_path)
+getwd()
+# This function loads required packages and installs them if they are not found
+pkgTest <- function(x)
+{
+  if (!require(x,character.only = TRUE))
+  {
+    install.packages(x,dep=TRUE)
+    if(!require(x,character.only = TRUE)) stop("Package not found")
+  }
+}
+# Load Packages
+pkgTest("tidyverse")
+pkgTest("ggplot2")
+pkgTest("lubridate")
+pkgTest("leaflet")
+pkgTest("htmlwidgets")
+pkgTest("zoo")
+pkgTest("dplyr")
+pkgTest("tagtools")
+pkgTest("plotly")
+pkgTest("RcppRoll")
+pkgTest("car")
+pkgTest("gridExtra")
+pkgTest("signal")
+pkgTest("ggpubr")
+```
+
+Import and process data
+```{r setup, include=FALSE}
+# Select file to import
+filename <- file.choose()
+# Import data
+data <- read_csv(filename,
+                 col_types = cols(
+                   dttz = col_datetime(),
+                   true_since = col_double(),
+                   Ax = col_double(),
+                   Ay = col_double(),
+                   Az = col_double(),
+                   Mx = col_double(),
+                   My = col_double(),
+                   Mz = col_double()))
+# Create deployment ID
+depid <- basename(filename)
+depid <- strsplit(depid,'-')
+depid <- depid[[1]][1]
+depid <- strsplit(depid,'_')
+depid <- depid[[1]][3]
+depid
+
+# Confirm correct dttz, since it has not been retaining time zone when writing to CSV 
+attr(data$dttz, "tzone") # Check tz
+
+# Fix Option 1 (used with Feb 2017 tags)
+# attr(data$dttz, "tzone") <- tzOffset # Use this to change from UTC to proper local time (time will change)
+
+# Fix Option 2 (used with July 2017 tags)
+# NOTE: Subtracts one hour from dt and dttz (because July 2017 tags were processed in Combine and ApplyCal as if was UTC-8)
+# attr(data$dttz, "tzone") <- "Etc/GMT+4"
+# attr(data$dttz, "tzone") #Check tz
+# data$dttz <- force_tz(data$dttz,tzone=tzOffset)
+# attr(data$dttz, "tzone") #Check tz
+# attr(data$dt, "tzone") <- "Etc/GMT+1"
+# attr(data$dt, "tzone") #Check tz
+# data$dt <- force_tz(data$dt,tzone="GMT")
+
+# Fix Option 3 (used with July 2018 tags)
+# data$dt <- data$dttz
+# attr(data$dttz, "tzone") <- tzOffset # Use this to change from UTC to proper local time (time will change)
+
+# Fix Option 4 (used with Feb 2019 tags)
+data$dttz <- force_tz(data$dttz,tzone=tzOffset) # If time is correct and tz is wrong, force the tz (time will NOT change)
+data$dt <- data$dttz
+attr(data$dt, "tzone") <- "GMT" # Use this to change from UTC to proper local time (time will change)
+
+
+# Check to make sure it worked
+attr(data$dttz, "tzone") # Check tz
+
+# Confirm correct dt
+attr(data$dt, "tzone") # Check tz
+
+# Create bird ID
+data$ID <- depid
+
+# Add sampling rate
+fs <- 50
+data$fs <- fs
+
+# For July 2018 tags need to remove/rename columns
+# data$freq <- NULL
+# data$temp <- NULL
+# data$tsDif <- data$tsDiff
+# data$tsDiff <- NULL
+
+# For Feb 2019 tags need to remove/rename columns
+data$temp <- NULL
+data$tsDif <- data$tsDiff
+data$tsDiff <- NULL
+
+# Add unique ID (used to link to logger guide/depMeta)
+data$depid <- "Z59-20190221"
+
+# Remove name
+data$name <-NULL
+
+# Reorder columns
+data <- data[,c("depid","ID","fs","dttz","dt","ts","Ax","Ay","Az","Mx","My","Mz","secs_since","true_since","tsDif")]
+
+
+# Save as RData
+depid <- basename(filename)
+depid <- strsplit(depid,'-')
+depid <- depid[[1]][1]
+save(data, file=paste(depid,".RData",sep=""))
+
+rm(data)
+
+attr(data$dttz, "tzone") # Check tz
+```

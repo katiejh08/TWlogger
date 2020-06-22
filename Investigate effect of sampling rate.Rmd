@@ -1,0 +1,808 @@
+---
+title: "Untitled"
+author: "Katie Harrington"
+date: "February 20, 2020"
+output: html_document
+---
+```{r setup,echo=FALSE,results="hide",warning=FALSE,collapse=TRUE,include=FALSE}
+# Set the Timezone Offset from UTC 
+tzOffset <- "Etc/GMT+3" # Falklands time in the winter
+# Set the Working Directory to the location of this File
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path ))
+rm(current_path)
+getwd()
+# This function loads required packages and installs them if they are not found
+pkgTest <- function(x)
+{
+  if (!require(x,character.only = TRUE))
+  {
+    install.packages(x,dep=TRUE)
+    if(!require(x,character.only = TRUE)) stop("Package not found")
+  }
+}
+# Load Packages
+pkgTest("tidyverse")
+pkgTest("ggplot2")
+pkgTest("lubridate")
+pkgTest("leaflet")
+pkgTest("htmlwidgets")
+pkgTest("argosfilter")
+pkgTest("zoo")
+pkgTest("dplyr")
+pkgTest("tagtools")
+pkgTest("plotly")
+pkgTest("RcppRoll")
+pkgTest("car")
+pkgTest("gridExtra")
+pkgTest("signal")
+pkgTest("ggpubr")
+pkgTest("ggmap")
+pkgTest("maps")
+pkgTest("mapdata")
+```
+
+```{r setup, include=FALSE}
+# Select file to import
+
+filename <- file.choose()
+# Import down sampled data
+data <- read_csv(filename,
+                 col_types = cols(
+                   dttz = col_datetime(),
+                   true_since = col_double(),
+                   Ax = col_double(),
+                   Ay = col_double(),
+                   Az = col_double(),
+                   Mx = col_double(),
+                   My = col_double(),
+                   Mz = col_double()))
+# Create deployment ID
+depid <- basename(filename)
+depid <- strsplit(depid,'-')
+depid <- depid[[1]][1]
+depid <- strsplit(depid,'_')
+depid <- depid[[1]][3]
+depid
+
+# Confirm correct dttz, since it has not been retaining time zone when writing to CSV 
+attr(data$dttz, "tzone") # Check tz
+# Fix Option 1
+attr(data$dttz, "tzone") <- tzOffset # Use this to change from UTC to proper local time (time will change)
+# Fix Option 2
+data$dttz <- force_tz(data$dttz,tzone=tzOffset) # If time is correct and tz is wrong, force the tz (time will NOT change)
+attr(data$dttz, "tzone") # Check tz
+
+# Data includes rediscretized data and metrics (IT HAS NOT BEEN SUBSET TO 24-hr)
+
+# Subset to only include time and acc data
+data <- data[,c("depid","ID","dttz","true_since","Ax","Ay","Az")]
+
+# Preserve complete data (before subsetting)
+datax <- data
+
+# Subset data to investigate various sampling rates 
+startTime <- as.POSIXct(strptime("2019-02-21 16:00:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+endTime <- as.POSIXct(strptime("2019-02-21 16:30:00",format="%Y-%m-%d %H:%M:%S"),tz=tzOffset)
+
+# Extract data for the selected timerange
+data <- subset(data, data$dttz >= startTime & data$dttz <= endTime)
+```
+
+Save original data as a 50-Hz dataframe
+
+50-Hz
+```{r}
+# Create Bird ID
+data$ID <- depid
+data$fs <- fs
+# Reorder columns
+data <- data[,c("ID","dttz","true_since","Ax","Ay","Az")]
+
+### Calculate 50-Hz VDBA (ms-2)
+
+# Set sampling rate
+fs <- 50
+
+# Calculate static (running mean)
+windowSize=fs*3  # 2-sec window 
+data <- data %>% 
+  arrange(ID,dttz) %>% 
+  group_by(ID) %>% 
+  mutate(static_Ax=roll_mean(Ax,windowSize,fill=NA),
+         static_Ay=roll_mean(Ay,windowSize,fill=NA),
+         static_Az=roll_mean(Az,windowSize,fill=NA)) %>%
+  ungroup
+
+# Replace the NA's at the beginning with the first good value
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>%
+  mutate(naUp = ifelse(row_number()<=windowSize/2,1,0),
+         naDown = ifelse(row_number() > n() - (windowSize/2+1),1,0)) %>% #View
+  ungroup %>% 
+  group_by(ID,naUp) %>% 
+  mutate(static_Ax = ifelse(naUp == 1,last(static_Ax),static_Ax),
+         static_Ay = ifelse(naUp == 1,last(static_Ay),static_Ay),
+         static_Az = ifelse(naUp == 1,last(static_Az),static_Az)) %>% 
+  ungroup %>% 
+  group_by(ID,naDown) %>% 
+  mutate(static_Ax = ifelse(naDown == 1,first(static_Ax),static_Ax),
+         static_Ay = ifelse(naDown == 1,first(static_Ay),static_Ay),
+         static_Az = ifelse(naDown == 1,first(static_Az),static_Az)) %>% 
+  ungroup
+data$naUp <- NULL
+data$naDown <- NULL
+
+# Calculate dynamic (raw-static) and VDBA (sum abs dynamic)
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>% 
+  mutate(dyn_Ax=Ax-static_Ax,
+         dyn_Ay=Ay-static_Ay,
+         dyn_Az=Az-static_Az,
+         VDBA=sqrt(dyn_Ax^2+dyn_Ay^2+dyn_Az^2)) %>% 
+  ungroup #%>% View
+data$VDBA <- data$VDBA/9.81
+data <- subset(data, select = -c(static_Ax,static_Ay,static_Az,dyn_Ax,dyn_Ay,dyn_Az))
+
+# Check for NAs
+sapply(data, function(x) sum(is.na(x)))
+
+# Save final
+data_50 <- data
+
+# Add sampling rate
+data_50$fs <- 50
+```
+
+Down sample to various sampling rates and calculate VDBA for each (i.e. 25-Hz, 10-Hz, and 5-Hz).
+
+25-Hz
+```{r}
+### Down sample to 25-Hz
+
+# Reset dataframe to original 50-Hz
+data <- data_50
+
+# Down sample data (decimate each vector separately)
+df <- 2 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# For datetime select every nth value
+dttz <- data$dttz
+a <- dttz
+dttz_down <- a[seq(1, length(a), df)]
+
+# For true_since select every nth value
+true_since <- data$true_since
+a <- true_since
+true_since_down <- a[seq(1, length(a), df)]
+
+# Create individual vectors from acc fields
+Ax <- data$Ax
+Ay <- data$Ay
+Az <- data$Az
+
+# Convert vectors to numeric matrix
+Ax_mat <- matrix(Ax,ncol=1)
+Ay_mat <- matrix(Ay,ncol=1)
+Az_mat <- matrix(Az,ncol=1)
+
+# Use decimate function
+Ax_down <- decimate(Ax_mat,df,ftype="fir")
+Ay_down <- decimate(Ay_mat,df,ftype="fir")
+Az_down <- decimate(Az_mat,df,ftype="fir")
+
+# Combine down sampled data into one dataframe
+data_down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
+data <- data_down
+
+# Recreate Bird ID after down sampling
+data$ID <- depid
+
+# Change column names to more practical shorter names
+colnames(data)[1:6] <- c("dttz","true_since","Ax","Ay","Az","ID")
+# Reorder columns
+data <- data[,c("ID","dttz","true_since","Ax","Ay","Az")]
+
+### Calculate 25-Hz VDBA (ms-2)
+
+# Reset sampling rate to newly down sampled rate
+fs <- fs/df
+
+# Calculate static (running mean)
+windowSize=fs*3 # 2-sec window 
+data <- data %>% 
+  arrange(ID,dttz) %>% 
+  group_by(ID) %>% 
+  mutate(static_Ax=roll_mean(Ax,windowSize,fill=NA),
+         static_Ay=roll_mean(Ay,windowSize,fill=NA),
+         static_Az=roll_mean(Az,windowSize,fill=NA)) %>%
+  ungroup
+
+# Replace the NA's at the beginning with the first good value
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>%
+  mutate(naUp = ifelse(row_number()<=windowSize/2+1,1,0),
+         naDown = ifelse(row_number() > n() - (windowSize/2+1),1,0)) %>% #View
+  ungroup %>% 
+  group_by(ID,naUp) %>% 
+  mutate(static_Ax = ifelse(naUp == 1,last(static_Ax),static_Ax),
+         static_Ay = ifelse(naUp == 1,last(static_Ay),static_Ay),
+         static_Az = ifelse(naUp == 1,last(static_Az),static_Az)) %>% 
+  ungroup %>% 
+  group_by(ID,naDown) %>% 
+  mutate(static_Ax = ifelse(naDown == 1,first(static_Ax),static_Ax),
+         static_Ay = ifelse(naDown == 1,first(static_Ay),static_Ay),
+         static_Az = ifelse(naDown == 1,first(static_Az),static_Az)) %>% 
+  ungroup
+data$naUp <- NULL
+data$naDown <- NULL
+
+# Calculate dynamic (raw-static) and VDBA (sum abs dynamic)
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>% 
+  mutate(dyn_Ax=Ax-static_Ax,
+         dyn_Ay=Ay-static_Ay,
+         dyn_Az=Az-static_Az,
+         VDBA=sqrt(dyn_Ax^2+dyn_Ay^2+dyn_Az^2)) %>% 
+  ungroup #%>% View
+data$VDBA <- data$VDBA/9.81
+data <- subset(data, select = -c(static_Ax,static_Ay,static_Az,dyn_Ax,dyn_Ay,dyn_Az))
+
+# Check for NAs
+sapply(data, function(x) sum(is.na(x)))
+
+# Save final
+data_25 <- data
+
+# Add sampling rate
+data_25$fs <- 25
+```
+
+10-Hz
+```{r}
+### Down sample to 10-Hz
+# Reset dataframe to original 50-Hz
+data <- data_50
+
+df <- 5 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# For datetime select every nth value
+dttz <- data$dttz
+a <- dttz
+dttz_down <- a[seq(1, length(a), df)]
+
+# For true_since select every nth value
+true_since <- data$true_since
+a <- true_since
+true_since_down <- a[seq(1, length(a), df)]
+
+# Create individual vectors from acc fields
+Ax <- data$Ax
+Ay <- data$Ay
+Az <- data$Az
+
+# Convert vectors to numeric matrix
+Ax_mat <- matrix(Ax,ncol=1)
+Ay_mat <- matrix(Ay,ncol=1)
+Az_mat <- matrix(Az,ncol=1)
+
+# Use decimate function
+Ax_down <- decimate(Ax_mat,df,ftype="fir")
+Ay_down <- decimate(Ay_mat,df,ftype="fir")
+Az_down <- decimate(Az_mat,df,ftype="fir")
+
+# Combine down sampled data into one dataframe
+data_down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
+data <- data_down
+
+# Rereate Bird ID after downsampling
+data$ID <- depid
+
+# Change column names to more practical shorter names
+colnames(data)[1:6] <- c("dttz","true_since","Ax","Ay","Az","ID")
+# Reorder columns
+data <- data[,c("ID","dttz","true_since","Ax","Ay","Az")]
+
+### Calculate 10-Hz VDBA (ms-2)
+
+# Reset sampling rate to newly down sampled rate
+fs <- fs/df
+
+# Calculate static (running mean)
+windowSize=fs*3 # 2-sec window 
+data <- data %>% 
+  arrange(ID,dttz) %>% 
+  group_by(ID) %>% 
+  mutate(static_Ax=roll_mean(Ax,windowSize,fill=NA),
+         static_Ay=roll_mean(Ay,windowSize,fill=NA),
+         static_Az=roll_mean(Az,windowSize,fill=NA)) %>%
+  ungroup
+
+# Replace the NA's at the beginning with the first good value
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>%
+  mutate(naUp = ifelse(row_number()<=windowSize/2,1,0),
+         naDown = ifelse(row_number() > n() - (windowSize/2+1),1,0)) %>% #View
+  ungroup %>% 
+  group_by(ID,naUp) %>% 
+  mutate(static_Ax = ifelse(naUp == 1,last(static_Ax),static_Ax),
+         static_Ay = ifelse(naUp == 1,last(static_Ay),static_Ay),
+         static_Az = ifelse(naUp == 1,last(static_Az),static_Az)) %>% 
+  ungroup %>% 
+  group_by(ID,naDown) %>% 
+  mutate(static_Ax = ifelse(naDown == 1,first(static_Ax),static_Ax),
+         static_Ay = ifelse(naDown == 1,first(static_Ay),static_Ay),
+         static_Az = ifelse(naDown == 1,first(static_Az),static_Az)) %>% 
+  ungroup
+data$naUp <- NULL
+data$naDown <- NULL
+
+# Calculate dynamic (raw-static) and VDBA (sum abs dynamic)
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>% 
+  mutate(dyn_Ax=Ax-static_Ax,
+         dyn_Ay=Ay-static_Ay,
+         dyn_Az=Az-static_Az,
+         VDBA=sqrt(dyn_Ax^2+dyn_Ay^2+dyn_Az^2)) %>% 
+  ungroup #%>% View
+data$VDBA <- data$VDBA/9.81
+data <- subset(data, select = -c(static_Ax,static_Ay,static_Az,dyn_Ax,dyn_Ay,dyn_Az))
+
+# Check for NAs
+sapply(data, function(x) sum(is.na(x)))
+
+# Save final
+data_10 <- data
+
+# Add sampling rate
+data_10$fs <- 10
+```
+
+5-Hz
+```{r}
+### Down sample to 5-Hz
+
+# Reset dataframe to original 50-Hz
+data <- data_50
+
+df <- 10 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# For datetime select every nth value
+dttz <- data$dttz
+a <- dttz
+dttz_down <- a[seq(1, length(a), df)]
+
+# For true_since select every nth value
+true_since <- data$true_since
+a <- true_since
+true_since_down <- a[seq(1, length(a), df)]
+
+# Create individual vectors from acc fields
+Ax <- data$Ax
+Ay <- data$Ay
+Az <- data$Az
+
+# Convert vectors to numeric matrix
+Ax_mat <- matrix(Ax,ncol=1)
+Ay_mat <- matrix(Ay,ncol=1)
+Az_mat <- matrix(Az,ncol=1)
+
+# Use decimate function
+Ax_down <- decimate(Ax_mat,df,ftype="fir")
+Ay_down <- decimate(Ay_mat,df,ftype="fir")
+Az_down <- decimate(Az_mat,df,ftype="fir")
+
+# Combine down sampled data into one dataframe
+data_down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
+data <- data_down
+
+# Create Bird ID after downsampling
+data$ID <- depid
+
+# Change column names to more practical shorter names
+colnames(data)[1:6] <- c("dttz","true_since","Ax","Ay","Az","ID")
+# Reorder columns
+data <- data[,c("ID","dttz","true_since","Ax","Ay","Az")]
+
+### Calculate 5-Hz VDBA (ms-2)
+
+# Reset sampling rate to newly down sampled rate
+fs <- fs/df
+
+# Calculate static (running mean)
+windowSize=fs*3 # 2-sec window 
+data <- data %>% 
+  arrange(ID,dttz) %>% 
+  group_by(ID) %>% 
+  mutate(static_Ax=roll_mean(Ax,windowSize,fill=NA),
+         static_Ay=roll_mean(Ay,windowSize,fill=NA),
+         static_Az=roll_mean(Az,windowSize,fill=NA)) %>%
+  ungroup
+
+# Replace the NA's at the beginning with the first good value
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>%
+  mutate(naUp = ifelse(row_number()<=windowSize/2+1,1,0),
+         naDown = ifelse(row_number() > n() - windowSize/2,1,0)) %>% #View
+  ungroup %>% 
+  group_by(ID,naUp) %>% 
+  mutate(static_Ax = ifelse(naUp == 1,last(static_Ax),static_Ax),
+         static_Ay = ifelse(naUp == 1,last(static_Ay),static_Ay),
+         static_Az = ifelse(naUp == 1,last(static_Az),static_Az)) %>% 
+  ungroup %>% 
+  group_by(ID,naDown) %>% 
+  mutate(static_Ax = ifelse(naDown == 1,first(static_Ax),static_Ax),
+         static_Ay = ifelse(naDown == 1,first(static_Ay),static_Ay),
+         static_Az = ifelse(naDown == 1,first(static_Az),static_Az)) %>% 
+  ungroup
+data$naUp <- NULL
+data$naDown <- NULL
+
+# Calculate dynamic (raw-static) and VDBA (sum abs dynamic)
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>% 
+  mutate(dyn_Ax=Ax-static_Ax,
+         dyn_Ay=Ay-static_Ay,
+         dyn_Az=Az-static_Az,
+         VDBA=sqrt(dyn_Ax^2+dyn_Ay^2+dyn_Az^2)) %>% 
+  ungroup #%>% View
+data$VDBA <- data$VDBA/9.81
+data <- subset(data, select = -c(static_Ax,static_Ay,static_Az,dyn_Ax,dyn_Ay,dyn_Az))
+
+# Check for NAs
+sapply(data, function(x) sum(is.na(x)))
+
+# Save final
+data_5 <- data
+
+# Add sampling rate
+data_5$fs <- 5
+```
+
+1-Hz
+```{r}
+### Down sample to 1-Hz
+
+# Reset dataframe to original 50-Hz
+data <- data_50
+
+# Down sample data (decimate each vector separately)
+df <- 50 # Set decimation factor df
+fs <- 50 # Set original sampling rate
+
+# For datetime select every nth value
+dttz <- data$dttz
+a <- dttz
+dttz_down <- a[seq(1, length(a), df)]
+
+# For true_since select every nth value
+true_since <- data$true_since
+a <- true_since
+true_since_down <- a[seq(1, length(a), df)]
+
+# Create individual vectors from acc fields
+Ax <- data$Ax
+Ay <- data$Ay
+Az <- data$Az
+
+# Convert vectors to numeric matrix
+Ax_mat <- matrix(Ax,ncol=1)
+Ay_mat <- matrix(Ay,ncol=1)
+Az_mat <- matrix(Az,ncol=1)
+
+# Use decimate function
+Ax_down <- decimate(Ax_mat,df,ftype="fir")
+Ay_down <- decimate(Ay_mat,df,ftype="fir")
+Az_down <- decimate(Az_mat,df,ftype="fir")
+
+# Combine down sampled data into one dataframe
+data_down <- cbind.data.frame(dttz_down,true_since_down,Ax_down,Ay_down,Az_down)
+data <- data_down
+
+# Create Bird ID after downsampling
+data$ID <- depid
+
+# Change column names to more practical shorter names
+colnames(data)[1:6] <- c("dttz","true_since","Ax","Ay","Az","ID")
+# Reorder columns
+data <- data[,c("ID","dttz","true_since","Ax","Ay","Az")]
+
+### Calculate 1-Hz VDBA (ms-2)
+
+# Reset sampling rate to newly down sampled rate
+fs <- fs/df
+
+# Calculate static (running mean)
+windowSize=fs*3 # 2-sec window 
+data <- data %>% 
+  arrange(ID,dttz) %>% 
+  group_by(ID) %>% 
+  mutate(static_Ax=roll_mean(Ax,windowSize,fill=NA),
+         static_Ay=roll_mean(Ay,windowSize,fill=NA),
+         static_Az=roll_mean(Az,windowSize,fill=NA)) %>%
+  ungroup
+
+# Replace the NA's at the beginning with the first good value
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>%
+  mutate(naUp = ifelse(row_number()<=windowSize/2+1,1,0),
+         naDown = ifelse(row_number() > n() - (windowSize/2),1,0)) %>% #View
+  ungroup %>% 
+  group_by(ID,naUp) %>% 
+  mutate(static_Ax = ifelse(naUp == 1,last(static_Ax),static_Ax),
+         static_Ay = ifelse(naUp == 1,last(static_Ay),static_Ay),
+         static_Az = ifelse(naUp == 1,last(static_Az),static_Az)) %>% 
+  ungroup %>% 
+  group_by(ID,naDown) %>% 
+  mutate(static_Ax = ifelse(naDown == 1,first(static_Ax),static_Ax),
+         static_Ay = ifelse(naDown == 1,first(static_Ay),static_Ay),
+         static_Az = ifelse(naDown == 1,first(static_Az),static_Az)) %>% 
+  ungroup
+data$naUp <- NULL
+data$naDown <- NULL
+
+# Calculate dynamic (raw-static) and VDBA (sum abs dynamic)
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>% 
+  mutate(dyn_Ax=Ax-static_Ax,
+         dyn_Ay=Ay-static_Ay,
+         dyn_Az=Az-static_Az,
+         VDBA=sqrt(dyn_Ax^2+dyn_Ay^2+dyn_Az^2)) %>% 
+  ungroup #%>% View
+data$VDBA <- data$VDBA/9.81
+data <- subset(data, select = -c(static_Ax,static_Ay,static_Az,dyn_Ax,dyn_Ay,dyn_Az))
+
+# Check for NAs
+sapply(data, function(x) sum(is.na(x)))
+
+# Save final
+data_1 <- data
+
+# Add sampling rate
+data_1$fs <- 1
+```
+
+Save as RData
+```{r}
+# Combine into one df and export to Rdata
+vdba <- bind_rows(data_50, data_25, data_10, data_5, data_1)
+save(vdba,file="vdba_new.RData")
+```
+
+Plot to compare sampling rates
+```{r}
+# Plot down sampled data overlaid on original 50-Hz data
+p50v25 <- ggplot() +
+  geom_line(data=data_50, aes(x = dttz, y = Ax,color = 'AX_50Hz')) +
+  geom_line(data=data_25, aes(x = dttz, y = Ax,color = 'AX_25Hz')) +
+  scale_colour_manual(name="Axis",
+                      values=c('AX_50Hz'="red", 'AX_25Hz'="blue")) +
+  ylim(-25,30) +
+  labs(x=NULL,
+       y = NULL) +
+  theme(legend.title = element_blank())
+# ggplotly()
+
+p50v10 <- ggplot() +
+  geom_line(data=data_50, aes(x = dttz, y = Ax,color = 'AX_50Hz')) +
+  geom_line(data=data_10, aes(x = dttz, y = Ax,color = 'AX_10Hz')) +
+  scale_colour_manual(name="Axis",
+                      values=c('AX_50Hz'="red", 'AX_10Hz'="blue")) +
+  ylim(-25,30) +
+  labs(x=NULL,
+       y = NULL) +
+  theme(legend.title = element_blank())
+
+p50v5 <- ggplot() +
+  geom_line(data=data_50, aes(x = dttz, y = Ax,color = 'AX_50Hz')) +
+  geom_line(data=data_5, aes(x = dttz, y = Ax,color = 'AX_5Hz')) +
+  scale_colour_manual(name="Axis",
+                      values=c('AX_50Hz'="red", 'AX_5Hz'="blue")) +
+  ylim(-25,30) +
+  labs(x=NULL,
+       y = NULL) +
+  theme(legend.title = element_blank())
+
+p50v1 <- ggplot() +
+  geom_line(data=data_50, aes(x = dttz, y = Ax,color = 'AX_50Hz')) +
+  geom_line(data=data_1, aes(x = dttz, y = Ax,color = 'AX_1Hz')) +
+  scale_colour_manual(name="Axis",
+                      values=c('AX_50Hz'="red", 'AX_1Hz'="blue")) +
+  ylim(-25,30) +
+  labs(x=NULL,
+       y = NULL) +
+  theme(legend.title = element_blank())
+
+pCompAll<-ggarrange(p50v25,p50v10,p50v5,p50v1, nrow=4)
+pCompAll <-annotate_figure(pCompAll,
+                           top = text_grob("Down Sample Comparisons of Raw Acceleration", color = "black"),
+                           left = text_grob("Ax (m s-2)", color = "black", rot = 90),
+                           bottom = text_grob("dttz", color = "black"))
+
+pCompAll
+ggsave(pCompAll, file="compareRatesPlot.jpg",width=12, height=8,dpi=300)
+```
+
+Plot to compare VDBA
+```{r}
+# Plot down sampled data overlaid on original 50-Hz data
+p50v25_vdba <- ggplot() +
+  geom_line(data=data_50, aes(x = dttz, y = VDBA,color = 'VDBA_50Hz')) +
+  geom_line(data=data_25, aes(x = dttz, y = VDBA,color = 'VDBA_25Hz')) +
+  scale_colour_manual(name="Axis",
+                      values=c('VDBA_50Hz'="red", 'VDBA_25Hz'="blue")) +
+  ylim(0,3.6) +
+  labs(x=NULL,
+       y = NULL) +
+  theme(legend.title = element_blank())
+
+p50v10_vdba <- ggplot() +
+  geom_line(data=data_50, aes(x = dttz, y = VDBA,color = 'VDBA_50Hz')) +
+  geom_line(data=data_10, aes(x = dttz, y = VDBA,color = 'VDBA_10Hz')) +
+  scale_colour_manual(name="Axis",
+                      values=c('VDBA_50Hz'="red", 'VDBA_10Hz'="blue")) +
+  ylim(0,3.6) +
+  labs(x=NULL,
+       y = NULL) +
+  theme(legend.title = element_blank())
+
+p50v5_vdba <- ggplot() +
+  geom_line(data=data_50, aes(x = dttz, y = VDBA,color = 'VDBA_50Hz')) +
+  geom_line(data=data_5, aes(x = dttz, y = VDBA,color = 'VDBA_5Hz')) +
+  scale_colour_manual(name="Axis",
+                      values=c('VDBA_50Hz'="red", 'VDBA_5Hz'="blue")) +
+  ylim(0,3.6) +
+  labs(x=NULL,
+       y = NULL) +
+  theme(legend.title = element_blank())
+
+p50v1_vdba <- ggplot() +
+  geom_line(data=data_50, aes(x = dttz, y = VDBA,color = 'VDBA_50Hz')) +
+  geom_line(data=data_1, aes(x = dttz, y = VDBA,color = 'VDBA_1Hz')) +
+  scale_colour_manual(name="Axis",
+                      values=c('VDBA_50Hz'="red", 'VDBA_1Hz'="blue")) +
+  ylim(0,3.6) +
+  labs(x=NULL,
+       y = NULL) +
+  theme(legend.title = element_blank())
+# ggplotly()
+
+pCompAllvdba<-ggarrange(p50v25_vdba,p50v10_vdba,p50v5_vdba,p50v1_vdba, nrow=4)
+pCompAllvdba <-annotate_figure(pCompAllvdba,
+                           top = text_grob("Down Sample Comparisons of VDBA", color = "black"),
+                           left = text_grob("VDBA (g)", color = "black", rot = 90),
+                           bottom = text_grob("dttz", color = "black"))
+
+pCompAllvdba
+ggsave(pCompAllvdba, file="compareVDBAPlot.jpg",width=12, height=8,dpi=300)
+```
+
+Clean up environment
+```{r}
+rm(Ax_mat)
+rm(Ay_mat)
+rm(Az_mat)
+rm(data_down)
+rm(a)
+rm(Ax)
+rm(Ax_down)
+rm(Ay)
+rm(Ay_down)
+rm(Az)
+rm(Az_down)
+rm(df)
+rm(dttz)
+rm(dttz_down)
+rm(fs)
+rm(true_since)
+rm(true_since_down)
+rm(windowSize)
+```
+
+BONEYARD
+
+Calculate VDBA to compare various sampling frequencies (data_50, data_25, data_10, data_5, data_1)
+```{r}
+#Calculate VDBA (ms-2)
+
+# Select sampling rate (i.e., data_50, data_25, data_10, data_5, data_1)
+# NOTE: must also change the dataframe name below that this will be saved to
+data <- data_50
+# Calculate static (running mean)
+
+# KJH jump in here (multiplied by a factor, so what else needs to be multiplied by a factor?)
+windowSize=fs*3 
+data <- data %>% 
+  arrange(ID,dttz) %>% 
+  group_by(ID) %>% 
+  mutate(static_Ax=roll_mean(Ax,windowSize,fill=NA),
+         static_Ay=roll_mean(Ay,windowSize,fill=NA),
+         static_Az=roll_mean(Az,windowSize,fill=NA)) %>%
+  ungroup
+
+# Replace the NA's at the beginning with the first good value
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>%
+  mutate(naUp = ifelse(row_number()<=(windowSize-(1*fs))/2+1,1,0),
+         naDown = ifelse(row_number() > n() - ((windowSize-(1*fs))/2+1),1,0)) %>%# View
+  ungroup %>% 
+  group_by(ID,naUp) %>% 
+  mutate(static_Ax = ifelse(naUp == 1,last(static_Ax),static_Ax),
+         static_Ay = ifelse(naUp == 1,last(static_Ay),static_Ay),
+         static_Az = ifelse(naUp == 1,last(static_Az),static_Az)) %>% 
+  ungroup %>% 
+  group_by(ID,naDown) %>% 
+  mutate(static_Ax = ifelse(naDown == 1,first(static_Ax),static_Ax),
+         static_Ay = ifelse(naDown == 1,first(static_Ay),static_Ay),
+         static_Az = ifelse(naDown == 1,first(static_Az),static_Az)) %>% 
+  ungroup
+data$naUp <- NULL
+data$naDown <- NULL
+
+# Calculate dynamic (raw-static) and VDBA (sum abs dynamic)
+data <- data %>%
+  arrange(ID,dttz) %>%
+  group_by(ID) %>% 
+  mutate(dyn_Ax=Ax-static_Ax,
+         dyn_Ay=Ay-static_Ay,
+         dyn_Az=Az-static_Az,
+         VDBA=sqrt(dyn_Ax^2+dyn_Ay^2+dyn_Az^2)) %>% 
+  ungroup #%>% View
+data$VDBA <- data$VDBA/9.81
+data <- subset(data, select = -c(static_Ax,static_Ay,static_Az,dyn_Ax,dyn_Ay,dyn_Az))
+
+# Check for NAs
+sapply(data, function(x) sum(is.na(x)))
+
+# Save final
+data_50_vdba <- data
+```
+
+
+Plot to compare VDBA - NOT USED 
+```{r}
+# Plot VDBA
+p50 <- data_50 %>%
+  ggplot(aes(x = dttz, y = VDBA),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "VDBA (50-Hz)")
+
+p25 <- data_25 %>%
+  ggplot(aes(x = dttz, y = VDBA),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "VDBA (25-Hz)")
+
+p10 <- data_10 %>%
+  ggplot(aes(x = dttz, y = VDBA),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "VDBA (10-Hz)")
+
+p5 <- data_5 %>%
+  ggplot(aes(x = dttz, y = VDBA),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "VDBA (5-Hz)")
+
+p1 <- data_1 %>%
+  ggplot(aes(x = dttz, y = VDBA),color= 'black') +
+  geom_line() +
+  labs(x = "Time", y = "VDBA (1-Hz)")
+
+pAll<-ggarrange(p50,p25,p10,p5,p1, nrow=5)
+pAll
+
+ggsave(pAll, file="vdbaPlots.jpg", width = 20, height = 20, scale=2)
+```

@@ -1,0 +1,29 @@
+---
+title: "Untitled"
+author: "Katie Harrington"
+date: "July 1, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## New ODBA data for Roland
+
+```{r}
+names(data_states)
+newODBA <- subset(data_states, select = c(ID,dttz,true_since,ODBA))
+newODBA <- newODBA %>% 
+  mutate(ODBAg = ODBA/9.81)
+newODBA <- subset(newODBA, select = c(ID,dttz,true_since,ODBAg))
+colnames(newODBA)[1:4] <- c("ID","dttz","true_since","ODBAg")
+
+PnewODBA <- newODBA %>% 
+  filter(ID=="B50") %>% 
+  ggplot() +
+  geom_point(aes(x=dttz, y=ODBAg))
+
+save(newODBA,file="KH_ODBA.RData")
+```
+

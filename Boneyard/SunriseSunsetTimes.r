@@ -1,5 +1,5 @@
 
-# create Spatial Points object of Sakhalvasho coordinates
+# create Spatial Points object of coordinates
 crds <- cbind(data$long, data$lat)
 data$crds <- SpatialPoints(crds,proj4string=CRS("+proj=longlat +datum=WGS84"))
 

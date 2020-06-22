@@ -1,0 +1,100 @@
+---
+title: "Subset to 24-hrs"
+author: "Katie Harrington"
+date: "March 1, 2020"
+output: html_document
+---
+KJH: still need to streamline with JAF Global Functions (to match TW processing for srise/set and distance stats)
+
+Set up environment
+```{r, warning=FALSE}
+# Set the Timezone Offset from UTC 
+tzOffset <- "Etc/GMT+3" # Falklands time in the winter
+# Set the Working Directory to the location of this File
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path ))
+rm(current_path)
+getwd()
+# This function loads required packages and installs them if they are not found
+pkgTest <- function(x)
+{
+  if (!require(x,character.only = TRUE))
+  {
+    install.packages(x,dep=TRUE)
+    if(!require(x,character.only = TRUE)) stop("Package not found")
+  }
+}
+# Load Packages
+pkgTest("tidyverse")
+pkgTest("ggplot2")
+pkgTest("lubridate")
+pkgTest("leaflet")
+pkgTest("htmlwidgets")
+pkgTest("zoo")
+pkgTest("dplyr")
+pkgTest("tagtools")
+pkgTest("plotly")
+pkgTest("RcppRoll")
+pkgTest("car")
+pkgTest("gridExtra")
+pkgTest("signal")
+pkgTest("ggpubr")
+```
+
+Subset to 24-hr
+```{r}
+# Choose the folder containing the multiple RData files
+# Select the first RData of the group you want to process
+filename <- file.choose()
+# Import data
+pathChoice <- dirname(filename)
+# This imports all RData files in the directory chosen
+filenames <- list.files(path = pathChoice, pattern = "*.RData", all.files = FALSE, full.names = TRUE, recursive = FALSE, ignore.case = TRUE)
+
+# Load deployment times from CSV
+depMeta <- read_csv(paste0(getwd(),"/depMeta.csv"))
+depMeta$startTime <- force_tz(depMeta$startTime,tzone=tzOffset)
+depMeta$endTime <- force_tz(depMeta$endTime,tzone=tzOffset)
+attr(depMeta$startTime, "tzone") # Check tz
+attr(depMeta$endTime, "tzone") # Check tz
+
+depMeta$dataStart <-as.POSIXct(NA)
+depMeta$dataEnd <-as.POSIXct(NA)
+attr(depMeta$dataStart, "tzone") <- tzOffset # set time zone
+attr(depMeta$dataEnd, "tzone") <- tzOffset
+                  
+# Create an empty dataframe to hold all the data
+dataset = data.frame()
+
+# Iteratively process all RData files to create 24hr subsets
+
+for(i in 1:length(filenames)) {
+  load(filenames[i])
+  # Arrange by dttz
+  data <- data %>% arrange(dttz)
+  # depMeta$dataStart[depMeta$depid==data$depid[1]] <- min(data$dttz)
+  # depMeta$dataEnd[depMeta$depid==data$depid[1]] <- max(data$dttz)
+  # Subset to deployment times
+  startTime <- depMeta %>% dplyr::filter(depid == data$depid[1]) %>% .$startTime
+  endTime <- depMeta %>% dplyr::filter(depid == data$depid[1]) %>% .$endTime
+  data <- subset(data, data$dttz >= startTime & data$dttz <= endTime)
+  # Save as .RData file
+  save(data, file=paste0(data$depid[1],"-50Hz-24hr", ".RData"))
+  # Combine into Dataset
+  if(i==1) dataset <- data else dataset <- rbind(dataset,data)
+}
+
+# Check for NAs
+sapply(dataset, function(x) sum(is.na(x)))
+
+# Save as .RData file
+save(dataset, file=paste0("Dataset-24hr", ".RData",sep=""))
+```
+
+Clean up environment
+```{r}
+rm(startTime)
+rm(endTime)
+rm(i)
+```
+
